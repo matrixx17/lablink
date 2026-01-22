@@ -1,0 +1,137 @@
+# ============================================
+# LabLink AI - Git Ignore
+# ============================================
+
+# ----------------------------------------
+# Environment & Secrets
+# ----------------------------------------
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+
+# ----------------------------------------
+# Python
+# ----------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+env/
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Ruff
+.ruff_cache/
+
+# ----------------------------------------
+# IDE & Editors
+# ----------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# ----------------------------------------
+# OS Files
+# ----------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.bak
+
+# ----------------------------------------
+# Docker
+# ----------------------------------------
+# Don't ignore docker-compose files, but ignore local overrides
+docker-compose.override.yml
+docker-compose.local.yml
+
+# ----------------------------------------
+# Logs & Temp Files
+# ----------------------------------------
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# ----------------------------------------
+# Data & Uploads
+# ----------------------------------------
+sample_data/
+uploads/
+*.csv
+*.tsv
+!tests/fixtures/*.csv
+!tests/fixtures/*.tsv
+
+# ----------------------------------------
+# Model Files (large)
+# ----------------------------------------
+*.bin
+*.h5
+*.pkl
+*.model
+models/
+
+# ----------------------------------------
+# Jupyter Notebooks
+# ----------------------------------------
+.ipynb_checkpoints/
+*.ipynb
+
+# ----------------------------------------
+# Build Artifacts
+# ----------------------------------------
+*.tar.gz
+*.zip
+*.whl
+
+# ----------------------------------------
+# Claude/AI
+# ----------------------------------------
+.claude/

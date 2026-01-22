@@ -1,0 +1,366 @@
+# Canonical Lab Fields Ontology
+# Each field has a canonical name and a list of common synonyms/variants
+# Used for embedding-based semantic matching of CSV headers
+
+fields:
+  # Time & Duration
+  time:
+    description: "Time point or timestamp"
+    synonyms:
+      - time
+      - timestamp
+      - timepoint
+      - time point
+      - t
+      - elapsed time
+      - run time
+      - duration
+      - time (min)
+      - time (s)
+
+  time_minutes:
+    description: "Time in minutes"
+    synonyms:
+      - minutes
+      - min
+      - mins
+      - time (min)
+      - time min
+      - elapsed minutes
+
+  time_seconds:
+    description: "Time in seconds"
+    synonyms:
+      - seconds
+      - sec
+      - secs
+      - time (s)
+      - time sec
+      - elapsed seconds
+
+  time_hours:
+    description: "Time in hours"
+    synonyms:
+      - hours
+      - hr
+      - hrs
+      - time (hr)
+      - time hours
+      - elapsed hours
+
+  # Temperature
+  temperature_celsius:
+    description: "Temperature in Celsius"
+    synonyms:
+      - temperature
+      - temp
+      - temperature (C)
+      - temp (C)
+      - temperature celsius
+      - temp celsius
+      - degC
+      - deg C
+      - degrees celsius
+
+  temperature_kelvin:
+    description: "Temperature in Kelvin"
+    synonyms:
+      - temperature (K)
+      - temp (K)
+      - temperature kelvin
+      - temp kelvin
+      - degK
+      - deg K
+      - degrees kelvin
+
+  # pH
+  ph:
+    description: "pH level"
+    synonyms:
+      - pH
+      - ph level
+      - pH value
+      - acidity
+      - pH reading
+      - solution pH
+      - measured pH
+      - pH measurement
+
+  # Optical Density / Absorbance
+  absorbance_600:
+    description: "Optical density at 600nm (OD600)"
+    synonyms:
+      - OD600
+      - OD 600
+      - OD600nm
+      - optical density 600
+      - absorbance 600
+      - abs600
+      - abs 600
+      - A600
+      - optical density at 600nm
+
+  absorbance_280:
+    description: "Absorbance at 280nm (protein)"
+    synonyms:
+      - A280
+      - abs280
+      - absorbance 280
+      - OD280
+      - optical density 280
+      - absorbance at 280nm
+      - protein absorbance
+
+  absorbance_260:
+    description: "Absorbance at 260nm (nucleic acid)"
+    synonyms:
+      - A260
+      - abs260
+      - absorbance 260
+      - OD260
+      - optical density 260
+      - absorbance at 260nm
+      - nucleic acid absorbance
+
+  absorbance_generic:
+    description: "Generic absorbance measurement"
+    synonyms:
+      - absorbance
+      - abs
+      - optical density
+      - OD
+      - AU
+      - absorbance units
+
+  # Concentration
+  concentration:
+    description: "Generic concentration"
+    synonyms:
+      - concentration
+      - conc
+      - concentration (mg/mL)
+      - conc (mg/mL)
+      - titer
+      - amount
+      - level
+
+  concentration_molar:
+    description: "Molar concentration"
+    synonyms:
+      - molarity
+      - molar concentration
+      - concentration (M)
+      - conc (M)
+      - mM
+      - millimolar
+      - micromolar
+      - uM
+
+  concentration_mass:
+    description: "Mass concentration (mg/mL or g/L)"
+    synonyms:
+      - mg/mL
+      - g/L
+      - mg per mL
+      - mass concentration
+      - concentration mg/mL
+      - protein concentration
+
+  # Yield
+  yield_fraction:
+    description: "Yield as fraction or percentage"
+    synonyms:
+      - yield
+      - yield (%)
+      - percent yield
+      - fraction yield
+      - product yield
+      - recovery
+      - recovery (%)
+      - percent recovery
+
+  yield_mass:
+    description: "Yield as mass"
+    synonyms:
+      - yield (mg)
+      - yield (g)
+      - mass yield
+      - product mass
+      - harvested mass
+      - total yield
+
+  # Pressure
+  pressure:
+    description: "Pressure measurement"
+    synonyms:
+      - pressure
+      - pressure (bar)
+      - pressure (psi)
+      - pressure (Pa)
+      - back pressure
+      - column pressure
+      - system pressure
+      - P
+
+  # Flow Rate
+  flow_rate:
+    description: "Flow rate"
+    synonyms:
+      - flow rate
+      - flow
+      - flowrate
+      - flow rate (mL/min)
+      - flow (mL/min)
+      - volumetric flow
+      - pump rate
+      - elution rate
+
+  # Volume
+  volume:
+    description: "Volume measurement"
+    synonyms:
+      - volume
+      - vol
+      - volume (mL)
+      - volume (L)
+      - vol (mL)
+      - sample volume
+      - injection volume
+      - total volume
+
+  # Cell/Biomass
+  cell_density:
+    description: "Cell density or count"
+    synonyms:
+      - cell density
+      - cell count
+      - cells/mL
+      - cell concentration
+      - viable cells
+      - VCD
+      - viable cell density
+
+  viability:
+    description: "Cell viability percentage"
+    synonyms:
+      - viability
+      - viability (%)
+      - percent viability
+      - cell viability
+      - viable (%)
+      - live cells (%)
+
+  biomass:
+    description: "Biomass concentration"
+    synonyms:
+      - biomass
+      - dry cell weight
+      - DCW
+      - wet cell weight
+      - WCW
+      - biomass concentration
+      - cell mass
+
+  # Metabolites
+  glucose:
+    description: "Glucose concentration"
+    synonyms:
+      - glucose
+      - glucose (g/L)
+      - glucose concentration
+      - sugar
+      - dextrose
+      - glucose level
+
+  lactate:
+    description: "Lactate concentration"
+    synonyms:
+      - lactate
+      - lactic acid
+      - lactate (g/L)
+      - lactate concentration
+      - lactate level
+
+  ammonia:
+    description: "Ammonia/ammonium concentration"
+    synonyms:
+      - ammonia
+      - ammonium
+      - NH4
+      - NH3
+      - ammonia (mM)
+      - ammonium concentration
+
+  dissolved_oxygen:
+    description: "Dissolved oxygen level"
+    synonyms:
+      - dissolved oxygen
+      - DO
+      - DO (%)
+      - oxygen saturation
+      - pO2
+      - oxygen level
+      - dissolved O2
+
+  # Chromatography
+  retention_time:
+    description: "Chromatography retention time"
+    synonyms:
+      - retention time
+      - RT
+      - retention time (min)
+      - elution time
+      - peak time
+      - tR
+
+  peak_area:
+    description: "Chromatography peak area"
+    synonyms:
+      - peak area
+      - area
+      - integrated area
+      - AUC
+      - area under curve
+      - peak integration
+
+  peak_height:
+    description: "Chromatography peak height"
+    synonyms:
+      - peak height
+      - height
+      - signal height
+      - peak intensity
+      - max signal
+
+  # Sample/Run Identifiers
+  sample_id:
+    description: "Sample identifier"
+    synonyms:
+      - sample ID
+      - sample id
+      - sample name
+      - sample
+      - specimen ID
+      - sample number
+      - sample #
+
+  batch_id:
+    description: "Batch or lot identifier"
+    synonyms:
+      - batch ID
+      - batch id
+      - lot ID
+      - lot number
+      - batch number
+      - batch #
+      - lot #
+
+  run_id:
+    description: "Run or experiment identifier"
+    synonyms:
+      - run ID
+      - run id
+      - experiment ID
+      - run number
+      - experiment number
+      - run #

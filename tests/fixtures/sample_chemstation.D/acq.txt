@@ -1,0 +1,27 @@
+Data File Name: C:\CHEM32\1\DATA\SAMPLE001.D
+Injection Date  : 15-Jan-24, 10:30:45
+Sample Name     : Caffeine Standard 100ppm
+Acq. Operator   : John Smith
+Acq. Method     : C:\CHEM32\1\METHODS\CAFFEINE.M
+Analysis Method : C:\CHEM32\1\METHODS\CAFFEINE.M
+Last changed    : 15-Jan-24, 09:15:00
+Instrument      : Agilent 1260 Infinity II
+Vial            : 5
+Injection       : 1
+Inj Volume      : 10.0 ul
+Seq. Line       : 1
+Location        : Vial 5
+
+=====================================================================
+                         Area Percent Report
+=====================================================================
+
+Sorted By             :      Signal
+Multiplier            :      1.0000
+Dilution              :      1.0000
+Sample Amount         :      1.0000  [ng/ul]   (not used in calc.)
+Use Multiplier & Dilution Factor with ISTDs
+
+Signal 1: DAD1 A, Sig=254,4 Ref=360,100
+
+ChemStation Version   : B.04.03 [SP1]

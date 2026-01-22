@@ -1,0 +1,121 @@
+# ============================================
+# LabLink AI - Production Overrides
+# ============================================
+# Use with: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# This file overrides development settings for production:
+# - Removes volume mounts for source code
+# - Increases resource limits
+# - Enables production logging
+# - Adds security settings
+
+services:
+  # ----------------------------------------
+  # API Service - Production Settings
+  # ----------------------------------------
+  api:
+    # Don't mount source code in production
+    volumes: []
+    # Production environment
+    environment:
+      - LOG_LEVEL=INFO
+      - JSON_LOGS=true
+      - PYTHONOPTIMIZE=2
+    # Use production command (from Dockerfile)
+    command: []
+    # Higher resource limits for production
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+      # Production replicas (requires swarm mode or k8s)
+      # replicas: 2
+    # Production logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
+        compress: "true"
+
+  # ----------------------------------------
+  # PostgreSQL - Production Settings
+  # ----------------------------------------
+  postgres:
+    # Don't expose port externally in production
+    ports: []
+    # Higher resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    # Production logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    # PostgreSQL tuning for production
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Shared memory settings
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=256MB"
+      - "-c"
+      - "effective_cache_size=512MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "default_statistics_target=100"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "min_wal_size=1GB"
+      - "-c"
+      - "max_wal_size=4GB"
+
+  # ----------------------------------------
+  # MinIO - Production Settings
+  # ----------------------------------------
+  minio:
+    # Don't expose console port externally
+    ports:
+      - "9000:9000"
+      # Console accessible only internally
+      # - "9001:9001"
+    # Higher resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    # Production logging
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
