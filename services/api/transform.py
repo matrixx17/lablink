@@ -632,32 +632,122 @@ def _map_to_qudt_unit(unit: str) -> str:
 # Format Registry
 # -----------------------------------------------------------------------------
 
+DEFAULT_OUTPUT_FORMAT = "asm"
+
 SUPPORTED_FORMATS = {
-    "lablink": {
-        "name": "LabLink Standard Format",
-        "version": LSF_VERSION,
-        "description": "LabLink AI canonical data representation",
-        "transform_fn": transform_to_standard,
-    },
     "asm": {
         "name": "Allotrope Simple Model",
-        "version": "partial",
-        "description": "Allotrope Simple Model (partial implementation)",
+        "version": "bioprocess-1",
+        "description": "Primary export — ASM-aligned bioprocess records (recommended)",
         "transform_fn": transform_to_asm,
+        "default": True,
+    },
+    "lablink": {
+        "name": "LabLink Standard Format (legacy)",
+        "version": LSF_VERSION,
+        "description": "Legacy JSON schema; prefer ASM for new integrations",
+        "transform_fn": transform_to_standard,
+        "default": False,
     },
 }
 
 
+def transform_bioprocess_asm(
+    run_meta: Dict[str, Any],
+    series: List[Dict[str, Any]],
+    alignment: Optional[Dict[str, Any]] = None,
+    org_id: str = "",
+) -> Dict[str, Any]:
+    """Build ASM-oriented bioprocess document from run + measurement series."""
+    doc = {
+        "@context": ASM_CONTEXT["@context"],
+        "@type": "asm:BioprocessRunDocument",
+        "@id": f"urn:lablink:{org_id}:run:{run_meta.get('external_run_id', 'unknown')}",
+        "asm:technique": "asm:Bioprocess",
+        "asm:runDocument": {
+            "@type": "asm:RunDocument",
+            "asm:runIdentifier": run_meta.get("external_run_id"),
+            "asm:batchIdentifier": run_meta.get("batch_id"),
+            "asm:campaignIdentifier": run_meta.get("campaign_id"),
+            "asm:bioreactorIdentifier": run_meta.get("bioreactor_id"),
+            "asm:status": run_meta.get("status"),
+        },
+        "asm:measurementSeries": [],
+        "asm:alignmentDocument": alignment or {},
+        "asm:processingDocument": {
+            "@type": "asm:ProcessingDocument",
+            "asm:processingTime": datetime.now(timezone.utc).isoformat(),
+            "asm:processingMethod": "LabLink AI Bioprocess Pipeline",
+            "asm:processingVersion": TRANSFORM_VERSION,
+        },
+    }
+
+    for s in series:
+        doc["asm:measurementSeries"].append({
+            "@type": "asm:MeasurementTimeSeries",
+            "asm:fieldName": s.get("canonical_field") or s.get("field_name"),
+            "asm:originalFieldName": s.get("field_name"),
+            "asm:dataKind": s.get("data_kind", "continuous"),
+            "asm:timeUnit": s.get("time_unit", "h"),
+            "asm:timeValues": s.get("time_values", []),
+            "asm:dataValues": [
+                {"@type": "qudt:QuantityValue", "qudt:numericValue": v}
+                for v in (s.get("values") or [])
+            ],
+        })
+
+    return doc
+
+
+def transform_run_to_asm(db, run) -> Dict[str, Any]:
+    """Load series from DB and emit ASM bioprocess document."""
+    from database import MeasurementSeries
+
+    series_rows = (
+        db.query(MeasurementSeries)
+        .filter(MeasurementSeries.run_id == run.id)
+        .all()
+    )
+    series = [
+        {
+            "field_name": s.field_name,
+            "canonical_field": s.canonical_field,
+            "data_kind": s.data_kind,
+            "time_unit": s.time_unit,
+            "time_values": s.time_values,
+            "values": s.values,
+        }
+        for s in series_rows
+    ]
+    return transform_bioprocess_asm(
+        run_meta={
+            "external_run_id": run.external_run_id,
+            "batch_id": run.batch_id,
+            "campaign_id": run.campaign_id,
+            "bioreactor_id": run.bioreactor_id,
+            "status": run.status,
+        },
+        series=series,
+        alignment=run.alignment,
+        org_id=run.org_id,
+    )
+
+
 def list_output_formats() -> List[Dict[str, str]]:
-    """List all available output formats."""
+    """List all available output formats (ASM first)."""
+    ordered = sorted(
+        SUPPORTED_FORMATS.items(),
+        key=lambda x: (not x[1].get("default", False), x[0]),
+    )
     return [
         {
             "format": key,
             "name": info["name"],
             "version": info["version"],
             "description": info["description"],
+            "recommended": info.get("default", False),
         }
-        for key, info in SUPPORTED_FORMATS.items()
+        for key, info in ordered
     ]
 
 

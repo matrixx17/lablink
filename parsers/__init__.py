@@ -25,17 +25,28 @@ from typing import List, Dict, Optional, Type
 from .base import BaseParser, ParsedResult
 from .generic_csv import GenericCSVParser
 from .agilent_chemstation import AgilentChemStationParser
+from .bioprocess_platform import (
+    SartoriusBiostatParser,
+    SartoriusAmbrParser,
+    EppendorfBioFloParser,
+    CytivaBioreactorParser,
+    NovaBioProfileParser,
+    BeckmanViCellParser,
+    BioprocessOfflineParser,
+)
 
 # Registry of available parsers
 # Order matters: specialized parsers should be listed before generic ones
 _PARSER_REGISTRY: List[Type[BaseParser]] = [
-    # Specialized instrument parsers (checked first)
     AgilentChemStationParser,
-    # TecanReaderParser,
-    # WatersEmpower,
-    # etc.
-
-    # Generic CSV is always last (fallback)
+    # Bioprocess — offline/discrete before continuous (more specific signatures)
+    BioprocessOfflineParser,
+    NovaBioProfileParser,
+    BeckmanViCellParser,
+    SartoriusAmbrParser,
+    SartoriusBiostatParser,
+    EppendorfBioFloParser,
+    CytivaBioreactorParser,
     GenericCSVParser,
 ]
 

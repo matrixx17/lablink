@@ -25,16 +25,110 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+class RunStatus(PyEnum):
+    ACTIVE = "active"
+    COMPLETE = "complete"
+    ARCHIVED = "archived"
+
+
+class DataKind(PyEnum):
+    CONTINUOUS = "continuous"
+    DISCRETE_OFFLINE = "discrete_offline"
+
+
+class RunRecord(Base):
+    """
+    First-class bioprocess run (batch/campaign) aggregating multiple instrument files.
+    """
+    __tablename__ = "runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    org_id = Column(String(128), nullable=False, index=True)
+    external_run_id = Column(String(256), nullable=False, index=True)
+    batch_id = Column(String(256), nullable=True)
+    campaign_id = Column(String(256), nullable=True)
+    bioreactor_id = Column(String(256), nullable=True)
+    product = Column(String(256), nullable=True)
+    status = Column(String(32), nullable=False, default=RunStatus.ACTIVE.value)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+    run_metadata = Column(JSONB, nullable=True)
+    qc = Column(JSONB, nullable=True)
+    alignment = Column(JSONB, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "external_run_id", name="uq_run_org_external"),
+        Index("ix_runs_org_status", "org_id", "status"),
+    )
+
+
 class FileRecord(Base):
     __tablename__ = "files"
     id = Column(Integer, primary_key=True, index=True)
     org_id = Column(String(128), index=True)
+    run_id = Column(Integer, nullable=True, index=True)
     filename = Column(String(512))
     s3_key = Column(String(1024))
     sample_id = Column(String(256), nullable=True)
     instrument = Column(String(256), nullable=True)
+    data_kind = Column(String(32), nullable=True, default=DataKind.CONTINUOUS.value)
     schema_guess = Column(JSON)
     qc = Column(JSON)
+
+
+class MeasurementSeries(Base):
+    """Queryable time-series measurements attached to a run."""
+    __tablename__ = "measurement_series"
+
+    id = Column(Integer, primary_key=True, index=True)
+    org_id = Column(String(128), nullable=False, index=True)
+    run_id = Column(Integer, nullable=False, index=True)
+    file_id = Column(Integer, nullable=True, index=True)
+    field_name = Column(String(256), nullable=False)
+    canonical_field = Column(String(256), nullable=True)
+    data_kind = Column(String(32), nullable=False, default=DataKind.CONTINUOUS.value)
+    time_unit = Column(String(32), nullable=False, default="h")
+    time_values = Column(JSONB, nullable=False)  # list[float]
+    values = Column(JSONB, nullable=False)  # list[float], aligned with time_values
+    point_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_series_run_field", "run_id", "field_name"),
+    )
+
+
+class ApiKey(Base):
+    """Organization API keys for authenticated access."""
+    __tablename__ = "api_keys"
+
+    id = Column(Integer, primary_key=True, index=True)
+    org_id = Column(String(128), nullable=False, index=True)
+    name = Column(String(256), nullable=False)
+    key_prefix = Column(String(16), nullable=False)
+    key_hash = Column(String(64), nullable=False)
+    active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class WebhookEvent(PyEnum):
@@ -76,6 +170,8 @@ class WebhookSubscription(Base):
 
 class AuditAction(PyEnum):
     """Enumeration of auditable actions for 21 CFR Part 11 compliance."""
+    RUN_CREATED = "run_created"
+    RUN_COMPLETED = "run_completed"
     FILE_INGESTED = "file_ingested"
     SCHEMA_MAPPED = "schema_mapped"
     QC_COMPLETED = "qc_completed"
@@ -92,6 +188,7 @@ class AuditAction(PyEnum):
 
 class EntityType(PyEnum):
     """Types of entities that can be audited."""
+    RUN = "run"
     FILE = "file"
     CONFIG = "config"
     USER = "user"

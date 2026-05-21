@@ -16,18 +16,24 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from database import (
-    init_db, SessionLocal, FileRecord, Baseline,
+    init_db, SessionLocal, FileRecord, Baseline, RunRecord, DataKind,
     AuditLog, AuditAction, EntityType, log_audit, verify_audit_chain,
     WebhookSubscription, WebhookEvent, engine
 )
+from runs_service import (
+    get_or_create_run, persist_measurement_series,
+    rebuild_run_alignment, run_qc_for_manifest, update_run_qc,
+)
+from bioprocess_routes import router as bioprocess_router
 from storage import get_presigned_post, ensure_bucket, s3 as s3_client, S3_BUCKET as BUCKET
 from mapping import guess_schema
 from qc import qc_summary
 from webhooks import fire_webhooks_sync, send_test_webhook
 from transform import (
     transform_to_standard, transform_to_asm, transform_data,
-    list_output_formats, SUPPORTED_FORMATS
+    list_output_formats, SUPPORTED_FORMATS, DEFAULT_OUTPUT_FORMAT,
 )
+from database import MeasurementSeries
 from baselines import (
     get_baselines, get_baselines_for_qc, get_all_baselines,
     update_baselines, reset_baselines
@@ -43,8 +49,8 @@ from circuit_breaker import (
 )
 
 # Version info
-API_VERSION = "0.1.0"
-BUILD_DATE = "2024-01-15"
+API_VERSION = "0.2.0-bioprocess"
+BUILD_DATE = "2026-05-21"
 
 # Request ID context variable (legacy, prefer request_id_ctx from logging_config)
 request_id_var: ContextVar[str] = ContextVar("request_id", default="")
@@ -60,24 +66,25 @@ logger = get_logger(__name__)
 API_DESCRIPTION = """
 # LabLink AI API
 
-**Lab Data Middleware Platform for Biotechnology and Life Sciences**
+**Bioprocess Data Platform for CDMOs and Process Development**
 
-LabLink AI provides a unified data pipeline for laboratory instrument data,
-including automated schema mapping, quality control, and standardized output formats.
+LabLink AI ingests bioreactor controller logs and offline analytics (HPLC titer,
+Vi-CELL, Nova BioProfile), aligns them on a run timeline, and exports
+**Allotrope Simple Model (ASM)** records with GxP-ready audit trails.
 
 ## Key Features
 
-- **Instrument Parsers**: Support for Agilent ChemStation, generic CSV, and more
-- **Semantic Schema Mapping**: AI-powered field mapping using embeddings
-- **Quality Control**: Automated anomaly detection, drift monitoring, completeness checks
-- **Data Transformation**: Output to LabLink Standard Format or Allotrope Simple Model
-- **Audit Logging**: 21 CFR Part 11 compliant tamper-evident audit trail
-- **Webhooks**: Real-time notifications for downstream systems
+- **Run-centric model**: Batch/campaign runs with queryable time-series in PostgreSQL
+- **Bioprocess parsers**: Sartorius, Eppendorf, Cytiva, Nova, Vi-CELL, Agilent HPLC
+- **Domain QC**: VCD growth, DO/pH setpoint excursions, titer trajectories
+- **ASM-first export**: ASM default; LabLink Standard Format (legacy) optional
+- **Read-only dashboard**: `/dashboard` for process scientists
+- **API keys**: `X-API-Key` header; set `AUTH_REQUIRED=true` in production
 
 ## Authentication
 
-Currently, authentication is based on `org_id` parameter. Each organization
-has isolated data. Future versions will add OAuth2/API key authentication.
+Use `X-API-Key` from `POST /api/v1/auth/keys`. When `AUTH_REQUIRED=false` (dev),
+`org_id` query parameter is accepted.
 
 ## Getting Started
 
@@ -116,6 +123,8 @@ app.add_middleware(
     expose_headers=["X-Request-ID"],
 )
 
+app.include_router(bioprocess_router)
+
 
 # Request ID Middleware
 @app.middleware("http")
@@ -149,8 +158,14 @@ def get_db():
 
 @app.on_event("startup")
 def startup():
-    init_db()
+    # Schema is managed by Alembic (make migrate). create_all() is not called here
+    # to avoid drift vs migration history — use `make migrate-repair` on legacy DBs.
     ensure_bucket()
+    try:
+        from startup_checks import check_bioprocess_schema
+        check_bioprocess_schema()
+    except Exception:
+        pass
 
 
 class PresignRequest(BaseModel):
@@ -264,14 +279,33 @@ class Manifest(BaseModel):
     )
     output_format: Optional[str] = Field(
         None,
-        description="Output format for transformation: 'lablink' or 'asm'"
+        description="Output format: 'asm' (default) or 'lablink' (legacy)"
+    )
+    run_id: Optional[int] = Field(None, description="Existing run ID to attach file")
+    external_run_id: Optional[str] = Field(None, description="Run/batch identifier")
+    batch_id: Optional[str] = None
+    campaign_id: Optional[str] = None
+    bioreactor_id: Optional[str] = None
+    data_kind: Optional[str] = Field(
+        "continuous",
+        description="continuous | discrete_offline",
+    )
+    time_column: Optional[str] = None
+    series_points: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description="Time-aligned points [{t, field, value}] for DB persistence",
+    )
+    parsed_metadata: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Parser metadata from edge agent",
     )
 
     class Config:
         json_schema_extra = {
             "example": {
-                "org_id": "acme-pharma",
-                "filename": "caffeine_standard.csv",
+                "org_id": "acme-cdmo",
+                "external_run_id": "RUN-2026-0142",
+                "filename": "biostat_run.csv",
                 "s3_key": "data/acme-pharma/caffeine_standard.csv",
                 "size": 2048,
                 "sample_id": "SAMPLE001",
@@ -411,12 +445,12 @@ def process_manifest(m: Manifest, return_transformed: bool = False) -> Optional[
         try:
             schema = guess_schema(m.headers or [])
             logger.info(f"Schema mapping complete for {m.filename}", extra={
-                "filename": m.filename,
+                "source_filename": m.filename,
                 "confidence": schema.get("confidence"),
             })
         except Exception as e:
             logger.error(f"Schema mapping failed for {m.filename}: {e}", extra={
-                "filename": m.filename,
+                "source_filename": m.filename,
                 "error_type": type(e).__name__,
             })
             # Use empty schema - don't fail the entire process
@@ -428,22 +462,38 @@ def process_manifest(m: Manifest, return_transformed: bool = False) -> Optional[
         try:
             # Fetch historical baselines for drift detection
             instrument = m.instrument or "unknown"
-            try:
-                historical_baselines = get_baselines_for_qc(m.org_id, instrument, db)
-            except Exception as e:
-                logger.warning(f"Failed to fetch baselines for drift detection: {e}")
-                historical_baselines = None
+
+            # Resolve bioprocess run
+            run = None
+            parsed_meta = getattr(m, "parsed_metadata", None) or {}
+            external_id = (
+                m.external_run_id
+                or m.batch_id
+                or parsed_meta.get("run_external_id")
+            )
+            if m.run_id:
+                run = db.query(RunRecord).filter(
+                    RunRecord.id == m.run_id, RunRecord.org_id == m.org_id
+                ).first()
+            elif external_id:
+                run = get_or_create_run(
+                    db, m.org_id, str(external_id),
+                    batch_id=m.batch_id, campaign_id=m.campaign_id,
+                    bioreactor_id=m.bioreactor_id,
+                )
 
             # Step 3: Run QC (non-critical - use pass status on failure)
             try:
-                qc = qc_summary(
+                qc = run_qc_for_manifest(
                     stats=m.stats or {},
-                    historical_baselines=historical_baselines if historical_baselines else None,
+                    org_id=m.org_id,
+                    instrument=instrument,
+                    db=db,
                 )
                 logger.info(f"QC complete for {m.filename}: {qc.get('overall_status', 'unknown')}")
             except Exception as e:
                 logger.error(f"QC analysis failed for {m.filename}: {e}", extra={
-                    "filename": m.filename,
+                    "source_filename": m.filename,
                     "error_type": type(e).__name__,
                 })
                 # Use default pass status - don't fail the entire process
@@ -456,12 +506,15 @@ def process_manifest(m: Manifest, return_transformed: bool = False) -> Optional[
 
             # Step 4: Create file record (critical - must succeed)
             try:
+                data_kind = m.data_kind or DataKind.CONTINUOUS.value
                 rec = FileRecord(
                     org_id=m.org_id,
+                    run_id=run.id if run else None,
                     filename=m.filename,
                     s3_key=m.s3_key,
                     sample_id=m.sample_id,
                     instrument=m.instrument,
+                    data_kind=data_kind,
                     schema_guess=schema,
                     qc=qc,
                 )
@@ -471,9 +524,21 @@ def process_manifest(m: Manifest, return_transformed: bool = False) -> Optional[
                 file_id = str(rec.id)
                 file_id_ctx.set(file_id)
                 logger.info(f"File record created: {file_id}")
+
+                if run:
+                    persist_measurement_series(
+                        db, m.org_id, run.id, rec.id,
+                        stats=m.stats or {},
+                        schema_mapping=schema,
+                        data_kind=data_kind,
+                        series_points=m.series_points,
+                        time_column=m.time_column,
+                    )
+                    rebuild_run_alignment(db, run.id)
+                    update_run_qc(db, run.id, m.org_id, m.instrument)
             except SQLAlchemyError as e:
                 logger.error(f"Database error creating file record: {e}", extra={
-                    "filename": m.filename,
+                    "source_filename": m.filename,
                     "error_type": type(e).__name__,
                 })
                 db.rollback()
@@ -694,7 +759,7 @@ def process_manifest(m: Manifest, return_transformed: bool = False) -> Optional[
                             logger.error(f"Audit logging failed (BASELINE_UPDATED): {e}")
                 except Exception as e:
                     logger.error(f"Baseline update failed: {e}", extra={
-                        "filename": m.filename,
+                        "source_filename": m.filename,
                         "instrument": instrument,
                     })
 
@@ -727,7 +792,7 @@ def process_manifest(m: Manifest, return_transformed: bool = False) -> Optional[
                     return {"file_id": int(file_id), "transformed": transformed}
                 except Exception as e:
                     logger.error(f"Data transformation failed: {e}", extra={
-                        "filename": m.filename,
+                        "source_filename": m.filename,
                         "format": m.output_format,
                     })
                     # Return file_id without transformation
@@ -755,6 +820,15 @@ def process_manifest(m: Manifest, return_transformed: bool = False) -> Optional[
         org_id_ctx.set("")
 
 
+def _run_process_manifest_safe(m: Manifest, return_transformed: bool = False):
+    """Background wrapper so failures are logged (async path returns no error)."""
+    try:
+        return process_manifest(m, return_transformed=return_transformed)
+    except Exception as e:
+        logger.exception(f"Background manifest processing failed for {m.filename}: {e}")
+        raise
+
+
 @app.post(
     "/api/v1/events",
     response_model=EventResponse,
@@ -763,30 +837,23 @@ def process_manifest(m: Manifest, return_transformed: bool = False) -> Optional[
     description="""
 Submit a file manifest for processing after uploading to S3.
 
-The manifest contains metadata extracted by the edge agent, including column headers
-and per-column statistics. The API will:
-
-1. **Schema Mapping**: Map column headers to canonical field names using semantic matching
-2. **Quality Control**: Run anomaly detection, drift analysis, and completeness checks
-3. **Baseline Updates**: Update historical baselines if QC passes
-4. **Webhook Notifications**: Fire webhooks for subscribed events
-
-**Processing Modes:**
-- **Async (default)**: Returns immediately with `status: "accepted"`. Use webhooks for completion notification.
-- **Sync (with output_format)**: Waits for processing and returns transformed data.
-
-**Output Formats:**
-- `lablink`: LabLink Standard Format - our canonical JSON schema
-- `asm`: Allotrope Simple Model - partial implementation for standards compliance
+Use **sync=true** during development to run inline and surface errors in the response.
 """,
     responses={
         200: {"description": "File accepted or processed"},
         400: {"description": "Invalid manifest or output format"},
+        500: {"description": "Processing failed (sync mode only)"},
     },
 )
-def events(m: Manifest, bg: BackgroundTasks):
+def events(
+    m: Manifest,
+    bg: BackgroundTasks,
+    sync: bool = Query(
+        False,
+        description="Process inline and return errors (recommended for local testing)",
+    ),
+):
     """Process uploaded file manifest with schema mapping and QC."""
-    # Validate output format if specified
     if m.output_format and m.output_format not in SUPPORTED_FORMATS:
         raise HTTPException(
             status_code=400,
@@ -794,19 +861,20 @@ def events(m: Manifest, bg: BackgroundTasks):
                    f"Supported formats: {list(SUPPORTED_FORMATS.keys())}"
         )
 
-    if m.output_format:
-        # Synchronous processing with transformation
-        result = process_manifest(m, return_transformed=True)
+    if m.output_format or sync:
+        try:
+            result = _run_process_manifest_safe(m, return_transformed=bool(m.output_format))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
         return EventResponse(
             status="processed",
-            file_id=result.get("file_id"),
-            transformed_data=result.get("transformed"),
+            file_id=result.get("file_id") if result else None,
+            transformed_data=result.get("transformed") if result else None,
             format=m.output_format,
         )
-    else:
-        # Asynchronous processing
-        bg.add_task(process_manifest, m)
-        return EventResponse(status="accepted")
+
+    bg.add_task(_run_process_manifest_safe, m)
+    return EventResponse(status="accepted")
 
 
 @app.get("/api/v1/files", response_model=List[FileOut])
@@ -838,7 +906,7 @@ def list_files(org_id: str = Query("default-org"), db: Session = Depends(get_db)
 @app.get("/api/v1/files/{file_id}/normalized")
 def get_normalized_file(
     file_id: int,
-    format: str = Query("lablink", description="Output format: lablink or asm"),
+    format: str = Query(DEFAULT_OUTPUT_FORMAT, description="Output format: asm (default) or lablink"),
     org_id: str = Query("default-org"),
     db: Session = Depends(get_db),
 ):
@@ -849,8 +917,8 @@ def get_normalized_file(
     consumption by downstream systems.
 
     Supported formats:
-    - lablink: LabLink Standard Format (our canonical format)
-    - asm: Allotrope Simple Model (partial implementation)
+    - asm: Allotrope Simple Model bioprocess export (default, recommended)
+    - lablink: Legacy LabLink Standard Format
     """
     # Validate format
     if format not in SUPPORTED_FORMATS:
@@ -886,19 +954,39 @@ def get_normalized_file(
     qc_data = record.qc or {}
     schema_data = record.schema_guess or {}
 
-    # Extract stats from QC flags if available
+    # Prefer persisted measurement series (full trajectories)
     raw_stats = {}
-    qc_flags = qc_data.get("qc_flags", {})
-    for field_name, field_data in qc_flags.items():
-        stats = field_data.get("stats", {})
-        raw_stats[field_name] = {
-            "mean": stats.get("mean"),
-            "std": stats.get("std"),
-            "min": stats.get("min"),
-            "max": stats.get("max"),
-            "n": stats.get("n", 0),
-            "values": [],  # Values not stored in DB
-        }
+    if record.run_id:
+        series_rows = (
+            db.query(MeasurementSeries)
+            .filter(MeasurementSeries.file_id == file_id)
+            .all()
+        )
+        for s in series_rows:
+            key = s.canonical_field or s.field_name
+            raw_stats[key] = {
+                "mean": float(sum(s.values) / len(s.values)) if s.values else None,
+                "std": None,
+                "min": min(s.values) if s.values else None,
+                "max": max(s.values) if s.values else None,
+                "n": len(s.values or []),
+                "values": list(s.values or []),
+                "time_values": list(s.time_values or []),
+                "data_kind": s.data_kind,
+            }
+
+    if not raw_stats:
+        qc_flags = qc_data.get("qc_flags", {})
+        for field_name, field_data in qc_flags.items():
+            stats = field_data.get("stats", {})
+            raw_stats[field_name] = {
+                "mean": stats.get("mean"),
+                "std": stats.get("std"),
+                "min": stats.get("min"),
+                "max": stats.get("max"),
+                "n": stats.get("n", 0),
+                "values": [],
+            }
 
     parsed_result = {
         "instrument": record.instrument or "unknown",

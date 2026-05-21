@@ -17,6 +17,7 @@ services:
     environment:
       - LOG_LEVEL=DEBUG
       - JSON_LOGS=false
+      - ONTOLOGY_PATH=/app/ontology/canonical_fields.yaml
     ports:
       - "8000:8000"
     depends_on:
