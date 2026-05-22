@@ -488,6 +488,92 @@ The agent currently treats HTTP 404/501 from `/cc/events` as "OK, endpoint not d
 
 ---
 
+## Comp-Chem Layer 3 — Chemistry-aware QC (pivot/compchem-campaigns)
+
+Layered on the same generic engine (`qc.py`) used by lab-instrument and bioprocess flows. Same `pass / warn / fail` severity model, same per-field finding shape — but operating on a single comp-chem run rather than a time-series of files.
+
+### New File
+
+`services/api/compchem_qc.py` — `compchem_qc_summary()` is the top-level entry. Takes a `CompChemParsedResult.to_manifest()` dict + optional historical baselines / molecule SMILES / MD or DFT extras / per-project thresholds, returns the same shape as `bioprocess_qc_summary`:
+
+```python
+{
+  "qc_mode": "compchem",
+  "qc_flags":      { ... generic per-metric findings ... },
+  "domain_findings":[ {rule, severity, message, details}, ... ],
+  "overall_status": "pass" | "warn" | "fail",
+  "summary": "...",
+  "thresholds_used": { ... },
+}
+```
+
+### Generic Checks Reused
+
+All five generic engines apply to the run's metric list:
+- Z-score anomalies (esp. on the synthesised `pose_scores` aggregate field)
+- Historical drift vs. campaign baselines (e.g. best_binding_affinity drift)
+- Monotonicity / discontinuity (on MD PE time-series fed via `expected_ranges`)
+- Completeness (truncated metric arrays)
+- Range validation
+
+### Domain Checks Added
+
+**Simulation stability (MD):**
+| Rule | Severity | Trigger |
+|---|---|---|
+| `termination_crashed` | fail | `termination_status == "crashed"` |
+| `termination_unconverged` | fail | `termination_status == "unconverged"` |
+| `termination_partial` | warn | `termination_status == "partial"` |
+| `rmsd_early_drift` | fail | Cα RMSD > 5 Å in first 20% of trajectory |
+| `energy_variance_excess` | warn | post-equilibration PE std > 2× baseline std (first 10% = baseline) |
+| `pbc_unwrap_failure` | fail | max atom coord exceeds box dimension |
+
+**Docking validity:**
+| Rule | Severity | Trigger |
+|---|---|---|
+| `top_pose_score_outlier` | warn | top pose >3σ better than rest of distribution (leave-one-out z; not full-sample z, which dilutes single-outlier signals in small N) |
+| `docking_score_collapse` | fail | all poses within 0.1 kcal/mol — docker failed to discriminate |
+| `top_pose_unparseable` / `top_pose_sanitize_failed` | fail | RDKit cannot parse or sanitize the docked SMILES |
+
+**DFT convergence:**
+| Rule | Severity | Trigger |
+|---|---|---|
+| `scf_excess_cycles` | warn | SCF cycles > 200 |
+| `minimum_has_imaginary` | fail | structure expected to be a minimum has imaginary modes |
+| `ts_multiple_imaginary` | fail | TS expected to have exactly 1 imaginary mode |
+| `bsse_not_corrected` | warn | binding-energy metric present, no counterpoise/BSSE marker |
+
+**Property range (RDKit-based):**
+| Rule | Severity | Trigger |
+|---|---|---|
+| `lipinski_veber_violations` | warn (1–2) / fail (3+) | MW≤500, LogP≤5, HBD≤5, HBA≤10, RotB≤10, TPSA≤140 (configurable per project) |
+| `pains_alert` | warn | PAINS substructure detected via `RDKit FilterCatalog` |
+
+### Thresholds Are Per-Project Overridable
+
+Every numeric threshold is in `DEFAULT_THRESHOLDS` and deep-merged with the `thresholds=` argument so a campaign can tighten or loosen any rule without touching code. E.g.:
+
+```python
+compchem_qc_summary(parsed, thresholds={"rmsd_drift_A": 3.5,
+                                         "lipinski": {"mw_max": 600}})
+```
+
+### Graceful RDKit Fallback
+
+PAINS, structural sanity, and SMILES-driven Lipinski require RDKit. If RDKit is not installed, those checks emit a `rdkit_unavailable` warning rather than crashing — the agent and API still function. `services/api/requirements.txt` adds `rdkit==2024.3.5` so the production container has it; the edge agent's `requirements.txt` does NOT add it (heavy dep, agent runs on scientist laptops).
+
+### Wired Into the Agent (Layer 1)
+
+`edge/compchem_agent.py` now runs `compchem_qc_summary` against every parsed file before upload, logs PASS/WARN/FAIL inline, and includes the result as `client_qc` in the manifest. This is *advisory* — the server is the source of truth; the client QC gives the scientist a fast local signal when something is obviously wrong before bandwidth is spent.
+
+### Tests
+
+`services/api/test_compchem_qc.py` — **46 tests, all passing**. Covers every rule's positive and negative case (e.g. `test_rmsd_early_spike_is_fail` vs `test_rmsd_late_spike_does_not_trigger_early_check`), plus integration tests through `compchem_qc_summary` for the full crashed-run / score-collapse / unconverged-DFT / RMSD-spike / drift paths.
+
+Run with: `cd services/api && python test_compchem_qc.py`
+
+---
+
 ## What's Not Here Yet (Known Gaps)
 
 - **Authentication** — API key infra added (`auth.py`); set `AUTH_REQUIRED=true` in production; no OAuth2
@@ -504,6 +590,7 @@ The agent currently treats HTTP 404/501 from `/cc/events` as "OK, endpoint not d
 
 | Date | Change |
 |---|---|
+| 2026-05-22 | Comp-chem Layer 3: chemistry-aware QC (`compchem_qc.py`) — MD stability, docking validity, DFT convergence, Lipinski/Veber + PAINS; 46 tests passing; wired into agent as `client_qc` |
 | 2026-05-22 | Comp-chem Layer 1: watcher agent (`edge/compchem_agent.py`), 7 parsers (GROMACS, OpenMM, Vina, Gnina, Glide, Gaussian, ORCA, RDKit tables), `.lablink.yaml` context resolver, smoke tests; SHA256 hashing + context-mandatory ingest |
 | 2026-05-22 | Comp-chem Layer 0: Project/Campaign/Run/Molecule/AssayResult data model + migration 003 |
 | 2026-05-22 | Bioprocess pivot: runs, measurement_series, API keys, bioprocess parsers, domain QC, dashboard, auth, SOC 2 compliance endpoint; bug fixes in runs_service, timeseries_align, migration |

@@ -65,6 +65,19 @@ from edge.campaign_context import (  # noqa: E402
     CONFIG_FILENAME,
 )
 
+# QC runs server-side normally, but we also run it client-side so a failed
+# QC can be logged at the watch source — useful when an HPC submits a
+# malformed run and the scientist is debugging on their laptop. We import
+# lazily because services/api isn't always on the agent's sys.path.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "..", "services", "api"))
+try:
+    from compchem_qc import compchem_qc_summary  # type: ignore  # noqa: E402
+    _AGENT_QC_AVAILABLE = True
+except ImportError:
+    _AGENT_QC_AVAILABLE = False
+    compchem_qc_summary = None  # type: ignore
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -272,6 +285,32 @@ class CompChemFileProcessor:
                 self._handle_failure(abs_path, f"hash failed: {e}", attempts)
                 return False
 
+            # 4b) Run client-side QC (advisory). Server is authoritative;
+            # this gives the scientist a fast local signal when something
+            # is obviously wrong with their just-submitted run.
+            qc_result: Optional[Dict[str, Any]] = None
+            if _AGENT_QC_AVAILABLE:
+                try:
+                    qc_result = compchem_qc_summary(
+                        parsed=parsed.to_manifest(),
+                        molecule_smiles=context.molecule_smiles,
+                    )
+                    status = qc_result.get("overall_status", "unknown")
+                    if status == "fail":
+                        logger.warning(
+                            "[%s] %s QC=FAIL — %s",
+                            context.campaign, filename,
+                            qc_result.get("summary", "(no summary)"),
+                        )
+                    elif status == "warn":
+                        logger.info(
+                            "[%s] %s QC=WARN — %s",
+                            context.campaign, filename,
+                            qc_result.get("summary", "(no summary)"),
+                        )
+                except Exception as e:
+                    logger.warning("QC raised on %s: %s — continuing", filename, e)
+
             # 5) Upload raw bytes (presigned URL flow, same as existing agent)
             s3_key: Optional[str] = None
             if not self.config.dry_run:
@@ -286,7 +325,9 @@ class CompChemFileProcessor:
                 logger.info("Uploaded %s -> %s", filename, s3_key)
 
             # 6) Build comp-chem manifest and POST
-            manifest = self._build_manifest(parsed, context, s3_key, filename, parser_name)
+            manifest = self._build_manifest(
+                parsed, context, s3_key, filename, parser_name, qc_result,
+            )
             if not self.config.dry_run:
                 if not self._post_manifest(manifest):
                     self._handle_failure(abs_path, "manifest post failed", attempts)
@@ -316,6 +357,7 @@ class CompChemFileProcessor:
         s3_key: Optional[str],
         filename: str,
         parser_name: Optional[str],
+        qc_result: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         manifest: Dict[str, Any] = {
             # Where this file lives in object storage
@@ -328,6 +370,8 @@ class CompChemFileProcessor:
             "artifact_role": classify_artifact_role(parsed, filename),
             # Full parsed result (software, version, metrics, termination, etc.)
             "parsed": parsed.to_manifest(),
+            # Client-side QC (advisory — server reruns authoritatively)
+            "client_qc": qc_result,
             # Bookkeeping
             "agent_timestamp": datetime.utcnow().isoformat() + "Z",
         }
