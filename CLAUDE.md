@@ -390,14 +390,101 @@ All tables prefixed `cc_` to coexist with lab-instrument tables in the same sche
 | `services/api/compchem_models.py` | All SQLAlchemy models + `log_cc_audit()` + `verify_cc_audit_chain()` |
 | `migrations/versions/20260522_000001_compchem_campaigns.py` | Migration `003_compchem` (revises `002_bioprocess`) |
 
-### What's Still Missing (Layer 1+)
+### What's Still Missing (Layer 2+)
 
-- SMILES canonicalisation at ingest (requires RDKit in the container)
-- FastAPI routes for campaign/run/molecule CRUD
+- SMILES canonicalisation at ingest (requires RDKit in the API container)
+- FastAPI routes for campaign/run/molecule CRUD (`POST /api/v1/cc/events` is the agent target)
 - Molecule registration service (dedup by InChIKey, property calculation)
 - Run submission + status polling
 - Campaign export (IND / partner data room bundle)
 - Scaffold query ("show me all runs for molecules matching substructure X")
+
+---
+
+## Comp-Chem Layer 1 — Ingestion (pivot/compchem-campaigns)
+
+Watcher agent + parsers + campaign-aware classification. Files in `parsers/compchem/` and `edge/compchem_agent.py`.
+
+### Key Conceptual Shift
+
+For the existing lab-instrument agent, a file's identity is in its bytes (Agilent header, Sartorius columns). For comp-chem, **the file's bytes don't say which campaign it belongs to** — a GROMACS `.xtc` looks the same whether it's lead-opt round 3 against EGFR or fragment screening against JAK2. So the agent needs an out-of-band context signal *before* it can post a meaningful manifest.
+
+**MVP solution: `.lablink.yaml` config files.** The scientist drops one into their project root specifying `org_id`, `project`, `campaign`, optionally `molecule_smiles`, and run defaults. The agent walks up from each new file's directory until it finds the closest ancestor `.lablink.yaml` and uses that as context. Files with no resolvable context are moved to `.unclassified/` rather than uploaded — silent ingestion of context-less files is the failure mode the campaign model exists to prevent.
+
+CLI tagging and directory-structure inference were considered but explicitly skipped for MVP (too magical, not auditable enough).
+
+### New Files
+
+| File | Purpose |
+|---|---|
+| `parsers/compchem/base.py` | `CompChemParser` ABC + `CompChemParsedResult` dataclass + `RunKind` / `TerminationStatus` enums. `CompChemMetric` has mandatory `unit`. |
+| `parsers/compchem/__init__.py` | Registry (DFT → docking → MD → property tables). Unknown files return a stub result so raw bytes still upload. |
+| `parsers/compchem/gaussian_orca.py` | Gaussian + ORCA log parsers via cclib (fallback regex when cclib missing). Extracts final energy (Hartree + kcal/mol), method, basis, convergence, termination. |
+| `parsers/compchem/glide.py` | Schrödinger Glide `_dock.log` + `_pv.maegz` parsers. Binary maegz inherits metrics from sibling log. |
+| `parsers/compchem/vina_gnina.py` | AutoDock Vina (`.pdbqt`, `.log`) + Gnina (`.log`, `.sdf` with CNNscore). Best binding affinity + per-pose rank metrics. |
+| `parsers/compchem/gromacs.py` | GROMACS `.log` parser (definitive) + `.gro` / `.tpr` / `.xtc` / `.trr` / `.edr` recognised as artifacts inheriting log metadata. |
+| `parsers/compchem/openmm.py` | OpenMM StateDataReporter CSV + output `.pdb` parsers; `.dcd` / `.h5` recognised as trajectory artifacts. |
+| `parsers/compchem/rdkit_table.py` | RDKit property table (CSV/TSV/SDF) parser — detects via SMILES column + ≥2 known descriptor columns. |
+| `edge/campaign_context.py` | `CampaignContextResolver`: walks up to find `.lablink.yaml`, caches by mtime, thread-safe. |
+| `edge/compchem_agent.py` | Watchdog-based agent. Context-mandatory, SHA256-hashed, posts to `POST /api/v1/cc/events`. Includes `--dry-run` mode for testing without the API. |
+| `parsers/compchem/test_compchem_parsers.py` | Smoke tests for parsers + context resolver. Run with `python parsers/compchem/test_compchem_parsers.py`. |
+| `tests/fixtures/compchem/EGFR-program-2026/lead_opt_round_3/` | Sample `.lablink.yaml` + Vina pdbqt + RDKit property CSV fixtures. |
+
+### Dependencies Added
+
+`edge/requirements.txt` now includes:
+- `PyYAML==6.0.2` — for `.lablink.yaml`
+- `cclib==1.8.1` — Gaussian / ORCA / many QM packages, do not reimplement
+
+### Detection / Parse Behaviour Highlights
+
+- **Mandatory units on every metric.** `CompChemMetric.unit` is non-optional; DFT energies are emitted in both source unit (Hartree, eV) and kcal/mol so cross-job comparison surfaces unit mismatches at query time.
+- **Termination status is first-class.** `NORMAL` / `UNCONVERGED` / `CRASHED` / `PARTIAL` / `UNKNOWN`. An unconverged DFT is uploaded with the result, not silently dropped.
+- **Streaming SHA256.** Computed in 1MB chunks so multi-GB trajectories don't blow memory.
+- **Binary artifacts inherit log metadata.** A standalone `.xtc` finds its sibling `.log` and copies software version / termination so the upload record is queryable.
+- **Parsers never raise on malformed input** — they return a result with `parse_warnings` and `termination_status=UNKNOWN` so the raw bytes still get uploaded for forensic value.
+
+### Running the Agent
+
+```bash
+# Install agent deps (one-time)
+cd edge && pip install -r requirements.txt && cd ..
+
+# Watch a project directory, dry-run mode (no API needed)
+python edge/compchem_agent.py --watch /path/to/projects --dry-run --debug
+
+# Real mode with API key (Layer 2 endpoint must exist)
+python edge/compchem_agent.py \
+  --watch /path/to/projects \
+  --api http://localhost:8000 \
+  --api-key llk_xxxxx
+```
+
+### Manifest Schema (POSTed to `/api/v1/cc/events`)
+
+```json
+{
+  "s3_key": "data/acme-pharma/dock_LL042_out.pdbqt",
+  "filename": "dock_LL042_out.pdbqt",
+  "file_size_bytes": 612,
+  "file_hash": "<sha256 hex>",
+  "parser_name": "autodock_vina",
+  "artifact_role": "metric_source",
+  "parsed": { /* CompChemParsedResult.to_manifest() */ },
+  "agent_timestamp": "2026-05-22T15:58:10Z",
+  "org_id": "acme-pharma",
+  "project": "EGFR-program-2026",
+  "campaign": "lead_opt_round_3",
+  "molecule_smiles": "Cc1ccc(cc1)C(=O)Nc2ccncc2",
+  "molecule_name": "LL-042",
+  "software_name": "AutoDock Vina",
+  "forcefield": "AMBER ff19SB",
+  "compute_environment": "hpc_slurm",
+  "context_source": "/path/to/.lablink.yaml"
+}
+```
+
+The agent currently treats HTTP 404/501 from `/cc/events` as "OK, endpoint not deployed yet" so Layer 1 is operable before Layer 2 lands.
 
 ---
 
@@ -417,6 +504,7 @@ All tables prefixed `cc_` to coexist with lab-instrument tables in the same sche
 
 | Date | Change |
 |---|---|
+| 2026-05-22 | Comp-chem Layer 1: watcher agent (`edge/compchem_agent.py`), 7 parsers (GROMACS, OpenMM, Vina, Gnina, Glide, Gaussian, ORCA, RDKit tables), `.lablink.yaml` context resolver, smoke tests; SHA256 hashing + context-mandatory ingest |
 | 2026-05-22 | Comp-chem Layer 0: Project/Campaign/Run/Molecule/AssayResult data model + migration 003 |
 | 2026-05-22 | Bioprocess pivot: runs, measurement_series, API keys, bioprocess parsers, domain QC, dashboard, auth, SOC 2 compliance endpoint; bug fixes in runs_service, timeseries_align, migration |
 | 2026-05-21 | Initial CLAUDE.md created from full codebase scan |
