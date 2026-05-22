@@ -60,6 +60,11 @@ export default function RunPage() {
         title={run.name || run.external_run_id || `Run ${run.id}`}
         actions={<Link className={styles.secondaryButton} to={withOrg(`/campaigns/${run.campaign_id}`, orgId)}>Back to campaign</Link>}
       />
+      {run.was_inferred ? (
+        <div className={styles.warningBanner}>
+          ⚠ Metadata for this run was inferred from the directory path. Verify the details below are correct.
+        </div>
+      ) : null}
       <div className={styles.stats}>
         <Card><StatusBadge status={run.status} /></Card>
         <Card><StatusBadge status={(run.qc as { overall_status?: string } | null)?.overall_status} /></Card>

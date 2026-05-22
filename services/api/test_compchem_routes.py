@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _TMPDB.close()
 os.environ["LABLINK_TEST_DB"] = _TMPDB.name
+os.environ["DEMO_RESET_SECRET"] = "test-demo-reset-secret"
 
 import database  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
@@ -49,7 +50,7 @@ database.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_te
 
 # Now safe to import the rest
 import compchem_models  # noqa: E402,F401  (registers tables on Base)
-from database import Base  # noqa: E402
+from database import Base, ApiKey  # noqa: E402
 
 # Patch JSONB → JSON for SQLite compatibility.
 # Two-step: (1) register a SQLite type compiler that renders JSONB as JSON,
@@ -68,14 +69,15 @@ SQLiteTypeCompiler.visit_JSONB = _visit_JSONB  # type: ignore[attr-defined]
 
 # Only create the comp-chem tables. Importing database.py registers the
 # lab-instrument webhook table which uses ARRAY (postgres-only); we don't
-# need it for these tests.
+# need it for these tests. ApiKey is included because Bearer org tokens share
+# the existing auth verifier.
 from compchem_models import (  # noqa: E402
-    Organization, Project, Campaign, Run, RunInput, RunOutput, RunMetric, RunLineage,
+    Organization, OrgCredential, OrgUser, Project, Campaign, DockingGrid, Run, RunInput, RunOutput, RunMetric, RunLineage,
     Molecule, MoleculeProperty, AssayResult, AuditEvent,
 )
 _cc_tables = [
     t.__table__ for t in (
-        Organization, Project, Campaign, Molecule, Run, RunInput, RunOutput,
+        ApiKey, Organization, OrgCredential, OrgUser, Project, Campaign, DockingGrid, Molecule, Run, RunInput, RunOutput,
         RunMetric, RunLineage, MoleculeProperty, AssayResult, AuditEvent,
     )
 ]
@@ -156,6 +158,160 @@ def test_get_campaign_404_for_unknown():
     assert r.status_code == 404
 
 
+def test_demo_login_and_reset_seed_demo_org():
+    r = client.post("/api/v1/demo/login")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["org_id"] == "demo-therapeutics"
+    assert body["email"] == "demo@lablink.io"
+    assert body["demo_mode"] is True
+
+    r = client.get("/api/v1/orgs/demo-therapeutics", params={"org_id": "demo-therapeutics"})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Demo Therapeutics"
+    assert r.json()["demo_mode"] is True
+
+    r = client.post("/demo/reset", headers={"X-Demo-Reset-Secret": "wrong"})
+    assert r.status_code == 401
+
+    r = client.post("/demo/reset", headers={"X-Demo-Reset-Secret": "test-demo-reset-secret"})
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "ok"
+    assert r.json()["reset_at"]
+
+    r = client.get("/api/v1/campaigns", params={"org_id": "demo-therapeutics"})
+    assert r.status_code == 200, r.text
+    campaigns = r.json()
+    assert len(campaigns) >= 1
+    campaign = campaigns[0]
+    assert campaign["status"] == "lead_nominated"
+    assert campaign["lead_molecule_id"] is not None
+    assert campaign["run_count"] == 16
+    assert "Bio Labs" in campaign["description"]
+
+    db = database.SessionLocal()
+    from compchem_models import AuditEvent, Campaign, Molecule, Run
+    demo_campaign = db.query(Campaign).filter(Campaign.org_id == "demo-therapeutics").first()
+    assert demo_campaign is not None
+    assert demo_campaign.extra_metadata["delivery_date"] == "2026-05-22"
+    lead = db.query(Molecule).filter(Molecule.id == demo_campaign.lead_molecule_id).first()
+    assert lead is not None
+    assert lead.name == "AC-007"
+    assert lead.external_id == "mol_001"
+    assert db.query(Run).filter(Run.campaign_id == demo_campaign.id, Run.run_kind == "docking").count() == 10
+    assert db.query(Run).filter(Run.campaign_id == demo_campaign.id, Run.run_kind == "molecular_dynamics").count() == 4
+    assert db.query(Run).filter(Run.campaign_id == demo_campaign.id, Run.run_kind == "dft").count() == 2
+    assert db.query(AuditEvent).filter(AuditEvent.org_id == "demo-therapeutics", AuditEvent.action == "cro_delivery").count() == 1
+    lead_event = db.query(AuditEvent).filter(AuditEvent.org_id == "demo-therapeutics", AuditEvent.action == "lead_nominated").first()
+    assert lead_event is not None
+    assert lead_event.actor == "dr_john_doe"
+    assert "AC-007 nominated as lead candidate" in lead_event.details["message"]
+    db.close()
+
+
+def test_issue_and_list_cro_upload_credential():
+    r = client.post(
+        f"/api/v1/orgs/{ORG}/credentials",
+        json={
+            "credential_type": "cro_upload",
+            "campaign_id": _CAMPAIGN_ID,
+            "label": "Round 3 CRO",
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["credential_type"] == "cro_upload"
+    assert body["token"].startswith("cro_")
+    assert body["label"] == "Round 3 CRO"
+
+    global _CRO_CREDENTIAL_ID, _CRO_TOKEN
+    _CRO_CREDENTIAL_ID = body["id"]
+    _CRO_TOKEN = body["token"]
+
+    r = client.get(f"/api/v1/orgs/{ORG}/credentials")
+    assert r.status_code == 200, r.text
+    listed = r.json()
+    assert any(item["id"] == _CRO_CREDENTIAL_ID for item in listed)
+    assert all("credential_value" not in item and "token" not in item for item in listed)
+
+
+def test_create_and_list_docking_grid():
+    r = client.post(
+        f"/api/v1/campaigns/{_CAMPAIGN_ID}/grids",
+        params={"org_id": ORG},
+        json={
+            "campaign_id": _CAMPAIGN_ID,
+            "name": "active_site_tight",
+            "receptor_pdb_s3_key": "data/acme/egfr_receptor.pdb",
+            "receptor_pdb_hash": "a" * 64,
+            "software": "AutoDock Vina",
+            "software_version": "1.2.5",
+            "box_center_x": 10.0,
+            "box_center_y": 11.0,
+            "box_center_z": 12.0,
+            "box_size_x": 20.0,
+            "box_size_y": 20.0,
+            "box_size_z": 20.0,
+            "exhaustiveness": 16,
+            "extra_params": {"num_modes": 9},
+            "notes": "EGFR ATP pocket",
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["name"] == "active_site_tight"
+    assert body["campaign_id"] == _CAMPAIGN_ID
+    assert body["id"]
+
+    global _GRID_ID
+    _GRID_ID = body["id"]
+
+    r = client.get(f"/api/v1/campaigns/{_CAMPAIGN_ID}/grids", params={"org_id": ORG})
+    assert r.status_code == 200, r.text
+    grids = r.json()
+    assert any(g["id"] == _GRID_ID for g in grids)
+
+
+def test_get_docking_grid():
+    r = client.get(f"/api/v1/grids/{_GRID_ID}", params={"org_id": ORG})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "active_site_tight"
+
+
+def test_cro_upload_credential_scopes_run_ingest():
+    manifest = {
+        "campaign_id": _CAMPAIGN_ID + 999,
+        "filename": "bad_scope.log",
+        "file_hash": "b" * 64,
+        "parsed": {"run_kind": "docking", "termination_status": "normal", "metrics": []},
+    }
+    r = client.post(
+        "/api/v1/runs/ingest",
+        json=manifest,
+        headers={"Authorization": f"Bearer {_CRO_TOKEN}"},
+    )
+    assert r.status_code == 403
+
+    manifest["campaign_id"] = _CAMPAIGN_ID
+    manifest["filename"] = "cro_upload.log"
+    manifest["inferred_from_path"] = True
+    manifest["inferred_context"] = {"campaign_name": "lead_opt_round_3", "run_type": "vina"}
+    r = client.post(
+        "/api/v1/runs/ingest",
+        json=manifest,
+        headers={"Authorization": f"Bearer {_CRO_TOKEN}"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["campaign_id"] == _CAMPAIGN_ID
+    global _CRO_RUN_ID
+    _CRO_RUN_ID = body["run_id"]
+
+    r = client.get(f"/api/v1/runs/{_CRO_RUN_ID}", params={"org_id": ORG})
+    assert r.status_code == 200, r.text
+    assert r.json()["was_inferred"] is True
+
+
 def test_ingest_run_persists_run_metrics_molecule_and_qc():
     manifest = {
         "org_id": ORG,
@@ -167,6 +323,7 @@ def test_ingest_run_persists_run_metrics_molecule_and_qc():
         "s3_key": "data/acme/dock_LL042_out.pdbqt",
         "file_size_bytes": 612,
         "file_hash": "abcdef" * 10 + "1234",  # 64 chars
+        "grid_id": _GRID_ID,
         "parser_name": "autodock_vina",
         "artifact_role": "metric_source",
         "parsed": {
@@ -176,6 +333,7 @@ def test_ingest_run_persists_run_metrics_molecule_and_qc():
             "termination_status": "normal",
             "method": "Vina",
             "metrics": [
+                {"name": "docking_score_top", "value": -9.2, "unit": "kcal/mol"},
                 {"name": "best_binding_affinity", "value": -9.2, "unit": "kcal/mol"},
                 {"name": "pose_affinity_rank_1", "value": -9.2, "unit": "kcal/mol",
                  "metadata": {"rank": 1, "rmsd_lb_A": 0.0}},
@@ -195,7 +353,7 @@ def test_ingest_run_persists_run_metrics_molecule_and_qc():
     assert body["campaign_id"] == _CAMPAIGN_ID
     assert body["molecule_id"] is not None
     assert body["molecule_created"] is True
-    assert body["metrics_count"] == 4
+    assert body["metrics_count"] == 5
     assert body["qc"] is not None
     assert body["qc"]["overall_status"] in ("pass", "warn", "fail")
 
@@ -264,6 +422,19 @@ def test_list_campaign_molecules_includes_top_metrics():
     assert best["run_id"] > 0
 
 
+def test_list_campaign_molecules_include_metrics_shape():
+    r = client.get(
+        f"/api/v1/campaigns/{_CAMPAIGN_ID}/molecules",
+        params={"org_id": ORG, "include_metrics": "true"},
+    )
+    assert r.status_code == 200, r.text
+    item = r.json()[0]
+    assert item["smiles"] == item["canonical_smiles"]
+    assert item["qc_status"] in ("pass", "warn", "fail", None)
+    assert item["metrics"]["docking_score_top"] == -9.2
+    assert item["metrics"]["best_binding_affinity"] == -9.5
+
+
 def test_get_molecule_detail_has_all_runs():
     r = client.get(f"/api/v1/molecules/{_MOLECULE_ID}", params={"org_id": ORG})
     assert r.status_code == 200, r.text
@@ -283,12 +454,63 @@ def test_get_run_detail_includes_qc_and_audit():
     body = r.json()
     assert body["id"] == _RUN_ID
     assert body["software_name"] == "AutoDock Vina"
-    assert len(body["metrics"]) == 4
+    assert len(body["metrics"]) == 5
+    assert body["grid_id"] == _GRID_ID
     assert body["qc"] is not None  # server_qc must be persisted
     assert isinstance(body["audit_events"], list)
     assert len(body["audit_events"]) >= 1
     # Hash-chain field is present
     assert all(len(a["record_hash"]) == 64 for a in body["audit_events"])
+
+
+def test_list_grid_runs_includes_top_docking_score():
+    r = client.get(f"/api/v1/grids/{_GRID_ID}/runs", params={"org_id": ORG})
+    assert r.status_code == 200, r.text
+    runs = r.json()
+    assert any(run["id"] == _RUN_ID and run["top_docking_score"] == -9.2 for run in runs)
+
+
+def test_patch_run_grid_associates_grid():
+    r = client.patch(
+        f"/api/v1/runs/{_RUN_ID}/grid",
+        params={"org_id": ORG},
+        json={"grid_id": _GRID_ID},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["grid_id"] == _GRID_ID
+
+
+def test_campaign_methods_json_and_text():
+    r = client.get(f"/api/v1/campaigns/{_CAMPAIGN_ID}/methods", params={"org_id": ORG})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["campaign_id"] == str(_CAMPAIGN_ID)
+    assert body["campaign_name"] == "lead_opt_round_3"
+    assert "docking" in body["paragraphs"]
+    assert "Molecular docking was performed using AutoDock Vina 1.2.5" in body["full_text"]
+    assert "(10, 11, 12) Å" in body["full_text"]
+    assert "20 × 20 × 20 Å" in body["full_text"]
+    assert body["run_counts"]["docking"] >= 1
+    assert body["software_versions"]["AutoDock Vina"] == ["1.2.5"]
+    assert "scoring_function" in body["missing_fields"]
+
+    r = client.get(
+        f"/api/v1/campaigns/{_CAMPAIGN_ID}/methods",
+        params={"org_id": ORG, "format": "text"},
+    )
+    assert r.status_code == 200, r.text
+    assert "text/plain" in r.headers.get("content-type", "")
+    assert "Molecular docking was performed" in r.text
+
+
+def test_campaign_config_template_download():
+    r = client.get(f"/api/v1/campaigns/{_CAMPAIGN_ID}/config-template", params={"org_id": ORG})
+    assert r.status_code == 200, r.text
+    assert "application/x-yaml" in r.headers.get("content-type", "")
+    assert 'attachment; filename="lablink_campaign.yaml"' in r.headers.get("content-disposition", "")
+    assert "# Generated for: lead_opt_round_3" in r.text
+    assert f'campaign_id: "{_CAMPAIGN_ID}"' in r.text
+    assert 'org_token: "PASTE_YOUR_TOKEN_HERE"' in r.text
 
 
 def test_export_campaign_csv_returns_flat_rows():
@@ -358,6 +580,16 @@ def test_verify_audit_chain_detects_tamper():
     db.close()
 
 
+def test_revoke_cro_upload_credential_hides_from_active_list():
+    r = client.delete(f"/api/v1/credentials/{_CRO_CREDENTIAL_ID}")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "revoked"
+
+    r = client.get(f"/api/v1/orgs/{ORG}/credentials")
+    assert r.status_code == 200, r.text
+    assert all(item["id"] != _CRO_CREDENTIAL_ID for item in r.json())
+
+
 # --- Cross-org isolation --------------------------------------------------
 
 def test_other_org_cannot_see_campaign():
@@ -375,6 +607,10 @@ def test_other_org_cannot_see_campaign():
 _CAMPAIGN_ID = -1
 _RUN_ID = -1
 _MOLECULE_ID = -1
+_GRID_ID = ""
+_CRO_CREDENTIAL_ID = ""
+_CRO_TOKEN = ""
+_CRO_RUN_ID = -1
 
 
 def _run_all():
@@ -383,16 +619,27 @@ def _run_all():
         test_create_campaign_duplicate_returns_409,
         test_get_campaign_includes_counts,
         test_get_campaign_404_for_unknown,
+        test_demo_login_and_reset_seed_demo_org,
+        test_issue_and_list_cro_upload_credential,
+        test_create_and_list_docking_grid,
+        test_get_docking_grid,
+        test_cro_upload_credential_scopes_run_ingest,
         test_ingest_run_persists_run_metrics_molecule_and_qc,
         test_ingest_run_dedups_molecule_on_repeat,
         test_get_campaign_counts_update_after_ingest,
         test_list_campaign_molecules_includes_top_metrics,
+        test_list_campaign_molecules_include_metrics_shape,
         test_get_molecule_detail_has_all_runs,
         test_get_run_detail_includes_qc_and_audit,
+        test_list_grid_runs_includes_top_docking_score,
+        test_patch_run_grid_associates_grid,
+        test_campaign_methods_json_and_text,
+        test_campaign_config_template_download,
         test_export_campaign_csv_returns_flat_rows,
         test_export_campaign_unknown_format_400,
         test_verify_audit_chain_returns_pass,
         test_verify_audit_chain_detects_tamper,
+        test_revoke_cro_upload_credential_hides_from_active_list,
         test_other_org_cannot_see_campaign,
     ]
     failed = 0

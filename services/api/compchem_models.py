@@ -30,6 +30,7 @@ Design decisions:
 import hashlib
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 from enum import Enum as PyEnum
 from typing import Any, Dict, Optional
@@ -66,6 +67,7 @@ class CampaignType(PyEnum):
 class CampaignStatus(PyEnum):
     PLANNED = "planned"
     ACTIVE = "active"
+    LEAD_NOMINATED = "lead_nominated"
     COMPLETED = "completed"
     ARCHIVED = "archived"
 
@@ -144,6 +146,8 @@ class AuditEventAction(PyEnum):
     FILE_UPLOADED = "file_uploaded"
     FILE_ACCESSED = "file_accessed"
     CONFIG_CHANGED = "config_changed"
+    CRO_DELIVERY = "cro_delivery"
+    LEAD_NOMINATED = "lead_nominated"
 
 
 # ---------------------------------------------------------------------------
@@ -157,10 +161,55 @@ class Organization(Base):
     id = Column(Integer, primary_key=True, index=True)
     org_id = Column(String(128), nullable=False, unique=True, index=True)
     name = Column(String(256), nullable=True)
+    demo_mode = Column(Boolean, nullable=False, default=False)
     extra_metadata = Column("metadata", JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
                         onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class OrgCredential(Base):
+    """Scoped upload credential issued for a CRO or external collaborator."""
+    __tablename__ = "org_credentials"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    org_id = Column(
+        String(128),
+        ForeignKey("cc_organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    credential_type = Column(String(50), nullable=False, index=True)
+    credential_value = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    label = Column(String(255), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_org_credentials_org_type", "org_id", "credential_type"),
+    )
+
+
+class OrgUser(Base):
+    """Minimal dashboard user record for demo/admin identity bootstrapping."""
+    __tablename__ = "org_users"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    org_id = Column(
+        String(128),
+        ForeignKey("cc_organizations.org_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    email = Column(String(255), nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    is_admin = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "email", name="uq_org_users_org_email"),
+    )
 
 
 class Project(Base):
@@ -205,6 +254,7 @@ class Campaign(Base):
     id = Column(Integer, primary_key=True, index=True)
     org_id = Column(String(128), nullable=False, index=True)
     project_id = Column(Integer, ForeignKey("cc_projects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    lead_molecule_id = Column(Integer, ForeignKey("cc_molecules.id", ondelete="SET NULL"), nullable=True, index=True)
 
     name = Column(String(256), nullable=False)
     description = Column(Text, nullable=True)
@@ -233,6 +283,42 @@ class Campaign(Base):
     )
 
 
+class DockingGrid(Base):
+    """
+    A receptor/grid definition used for docking runs within a campaign.
+
+    The primary key is a UUID string so grid IDs can be safely copied into
+    .lablink.yaml files and used by edge agents without exposing sequential IDs.
+    """
+    __tablename__ = "docking_grids"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id = Column(Integer, ForeignKey("cc_campaigns.id", ondelete="CASCADE"), nullable=False)
+
+    name = Column(String(255), nullable=False)
+    receptor_pdb_s3_key = Column(String(1024), nullable=True)
+    receptor_pdb_hash = Column(String(64), nullable=True)
+    software = Column(String(100), nullable=False)
+    software_version = Column(String(50), nullable=True)
+
+    box_center_x = Column(Float, nullable=True)
+    box_center_y = Column(Float, nullable=True)
+    box_center_z = Column(Float, nullable=True)
+    box_size_x = Column(Float, nullable=True)
+    box_size_y = Column(Float, nullable=True)
+    box_size_z = Column(Float, nullable=True)
+
+    exhaustiveness = Column(Integer, nullable=True)
+    extra_params = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    notes = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "name", name="uq_docking_grid_campaign_name"),
+        Index("ix_docking_grids_campaign_id", "campaign_id"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Run and its sub-entities
 # ---------------------------------------------------------------------------
@@ -252,11 +338,13 @@ class Run(Base):
 
     # Optional: the molecule this run characterises (null for multi-molecule jobs)
     molecule_id = Column(Integer, ForeignKey("cc_molecules.id", ondelete="SET NULL"), nullable=True, index=True)
+    grid_id = Column(String(36), ForeignKey("docking_grids.id", ondelete="SET NULL"), nullable=True)
 
     external_run_id = Column(String(256), nullable=True, index=True)  # job ID on HPC / cloud scheduler
     name = Column(String(256), nullable=True)
     run_kind = Column(String(64), nullable=False, default=RunKind.OTHER.value)
     status = Column(String(32), nullable=False, default=RunStatus.PENDING.value)
+    was_inferred = Column(Boolean, nullable=False, default=False)
 
     # Reproducibility fields — first-class, not buried in metadata
     software_name = Column(String(128), nullable=True)     # e.g. "AutoDock Vina", "GROMACS"
@@ -281,6 +369,7 @@ class Run(Base):
     __table_args__ = (
         Index("ix_cc_runs_campaign_status", "campaign_id", "status"),
         Index("ix_cc_runs_org_kind", "org_id", "run_kind"),
+        Index("ix_cc_runs_grid_id", "grid_id"),
     )
 
 

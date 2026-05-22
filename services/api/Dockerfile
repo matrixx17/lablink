@@ -41,6 +41,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
     tini \
+    libxrender1 \
+    libxext6 \
+    libsm6 \
+    libexpat1 \
+    libfontconfig1 \
+    libfreetype6 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 

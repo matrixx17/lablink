@@ -25,7 +25,7 @@ from database import (
     RunRecord, MeasurementSeries, ApiKey,
 )
 from compchem_models import (  # noqa: F401
-    Organization, Project, Campaign, Run, RunInput, RunOutput, RunMetric,
+    Organization, OrgCredential, OrgUser, Project, Campaign, DockingGrid, Run, RunInput, RunOutput, RunMetric,
     Molecule, MoleculeProperty, AssayResult, AuditEvent, RunLineage,
 )
 

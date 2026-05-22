@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -58,17 +59,98 @@ logger = logging.getLogger("lablink-agent.campaign_context")
 
 CONFIG_FILENAME = ".lablink.yaml"
 
+RUN_TYPE_COMPONENTS = {"gromacs", "vina", "autodock", "gaussian", "orca", "openmm", "rdkit"}
+RUN_KIND_BY_HINT = {
+    "gromacs": "molecular_dynamics",
+    "openmm": "molecular_dynamics",
+    "vina": "docking",
+    "autodock": "docking",
+    "gaussian": "dft",
+    "orca": "dft",
+    "rdkit": "property_prediction",
+}
+
+
+@dataclass
+class PathInference:
+    campaign_name: Optional[str] = None
+    molecule_label: Optional[str] = None
+    run_type: Optional[str] = None
+    run_index: Optional[int] = None
+
+    @property
+    def has_context(self) -> bool:
+        return any((self.campaign_name, self.molecule_label, self.run_type, self.run_index is not None))
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "campaign_name": self.campaign_name,
+            "molecule_label": self.molecule_label,
+            "run_type": self.run_type,
+            "run_index": self.run_index,
+        }
+
+
+def infer_from_path(file_path: str, watch_root: Optional[str] = None) -> PathInference:
+    """
+    Infer campaign/molecule/run hints from a directory layout.
+
+    Rules are intentionally simple and auditable:
+      campaigns/{name}, molecules/{smiles_or_label}, known software component,
+      and run_12/run12.
+    """
+    abs_path = os.path.abspath(file_path)
+    if watch_root:
+        try:
+            rel = os.path.relpath(abs_path, os.path.abspath(watch_root))
+        except ValueError:
+            rel = abs_path
+    else:
+        rel = abs_path
+    parts = [p for p in rel.replace("\\", "/").split("/") if p and p != "."]
+    lowered = [p.lower() for p in parts]
+
+    inferred = PathInference()
+    for idx, part in enumerate(lowered[:-1]):
+        if part == "campaigns" and idx + 1 < len(parts):
+            inferred.campaign_name = parts[idx + 1]
+            break
+
+    for idx, part in enumerate(lowered[:-1]):
+        if part == "molecules" and idx + 1 < len(parts):
+            inferred.molecule_label = parts[idx + 1]
+            break
+
+    for part in lowered:
+        if part in RUN_TYPE_COMPONENTS:
+            inferred.run_type = part
+            break
+
+    for part in lowered:
+        match = re.fullmatch(r"run_?(\d+)", part)
+        if match:
+            inferred.run_index = int(match.group(1))
+            break
+
+    return inferred
+
 
 @dataclass
 class CampaignContext:
     """Per-file campaign context resolved from .lablink.yaml."""
-    org_id: str
-    project: str
-    campaign: str
+    org_id: Optional[str] = None
+    project: str = ""
+    campaign: str = ""
     campaign_id: Optional[int] = None
+    org_token: Optional[str] = None
     molecule_smiles: Optional[str] = None
     molecule_name: Optional[str] = None
     molecule_external_id: Optional[str] = None
+    molecule_label: Optional[str] = None
+    grid_id: Optional[str] = None
+    grid_name: Optional[str] = None
+    inferred_from_path: bool = False
+    inferred_context: Dict[str, Any] = field(default_factory=dict)
     run_metadata: Dict[str, Any] = field(default_factory=dict)
     run_defaults: Dict[str, Any] = field(default_factory=dict)
     notes: Optional[str] = None
@@ -77,9 +159,12 @@ class CampaignContext:
 
     def merge_into_manifest(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
         """Apply context fields onto a manifest dict (non-destructive)."""
-        manifest.setdefault("org_id", self.org_id)
-        manifest.setdefault("project", self.project)
-        manifest.setdefault("campaign", self.campaign)
+        if self.org_id:
+            manifest.setdefault("org_id", self.org_id)
+        if self.project:
+            manifest.setdefault("project", self.project)
+        if self.campaign:
+            manifest.setdefault("campaign", self.campaign)
         if self.campaign_id is not None and not manifest.get("campaign_id"):
             manifest["campaign_id"] = self.campaign_id
         if self.molecule_smiles and not manifest.get("molecule_smiles"):
@@ -88,12 +173,21 @@ class CampaignContext:
             manifest["molecule_name"] = self.molecule_name
         if self.molecule_external_id and not manifest.get("molecule_external_id"):
             manifest["molecule_external_id"] = self.molecule_external_id
+        if self.molecule_label and not manifest.get("molecule_name"):
+            manifest["molecule_name"] = self.molecule_label
+        if self.grid_id and not manifest.get("grid_id"):
+            manifest["grid_id"] = self.grid_id
+        if self.grid_name and not manifest.get("grid_name"):
+            manifest["grid_name"] = self.grid_name
         if self.notes and not manifest.get("notes"):
             manifest["notes"] = self.notes
         if self.run_metadata and not manifest.get("run_metadata"):
             manifest["run_metadata"] = self.run_metadata
         if self.config_path:
             manifest.setdefault("context_source", self.config_path)
+        if self.inferred_from_path:
+            manifest["inferred_from_path"] = True
+            manifest["inferred_context"] = self.inferred_context
         # Run defaults: fill in software_name, forcefield, compute_environment, etc.
         for key, val in self.run_defaults.items():
             if val is not None and not manifest.get(key):
@@ -182,39 +276,58 @@ class CampaignContextResolver:
             logger.error("%s: top-level must be a mapping, got %s", config_path, type(raw).__name__)
             return None
 
-        # Required fields. campaign_id is accepted as an explicit DB target,
-        # but project/campaign names remain useful for human-readable context
-        # and for first-run bootstrap when no ID exists yet.
+        # New minimal hosted config requires only campaign_id + org_token.
+        # Legacy configs with org_id/project/campaign are still accepted so
+        # existing local fixtures and self-hosted users do not break.
         org_id = raw.get("org_id")
         project = raw.get("project")
         campaign = raw.get("campaign")
-        missing = [k for k, v in (
-            ("org_id", org_id),
-        ) if not v]
-        if not raw.get("campaign_id"):
-            missing.extend([k for k, v in (("project", project), ("campaign", campaign)) if not v])
+        campaign_id = raw.get("campaign_id")
+        org_token = raw.get("org_token")
+        has_legacy_context = bool(org_id and project and campaign)
+        missing = []
+        if not has_legacy_context:
+            if not campaign_id:
+                missing.append("campaign_id")
+            if not org_token:
+                missing.append("org_token")
         if missing:
             logger.error(
-                "%s missing required keys: %s. File will be uploaded with "
-                "unknown context.",
+                "%s missing required keys: %s. File will be uploaded with unknown context.",
                 config_path,
                 ", ".join(missing),
             )
             return None
+        if has_legacy_context and (not campaign_id or not org_token):
+            logger.warning(
+                "%s uses legacy org_id/project/campaign context. New hosted configs only require campaign_id and org_token.",
+                config_path,
+            )
 
         run_defaults = raw.get("run") or {}
         if not isinstance(run_defaults, dict):
             logger.warning("%s: 'run' must be a mapping; ignoring", config_path)
             run_defaults = {}
+        if raw.get("run_type") and not run_defaults.get("run_kind"):
+            run_defaults["run_kind"] = raw.get("run_type")
+        for top_level_default in ("software_name", "software_version", "forcefield", "compute_environment"):
+            if raw.get(top_level_default) and not run_defaults.get(top_level_default):
+                run_defaults[top_level_default] = raw.get(top_level_default)
+        for optional_key in ("molecule_smiles", "run", "software_name", "software_version"):
+            if optional_key not in raw:
+                logger.warning("%s missing optional key %s; proceeding with parser/path inference", config_path, optional_key)
 
         return CampaignContext(
-            org_id=str(org_id),
+            org_id=str(org_id) if org_id is not None else None,
             project=str(project or ""),
             campaign=str(campaign or ""),
-            campaign_id=int(raw["campaign_id"]) if raw.get("campaign_id") is not None else None,
+            campaign_id=int(campaign_id) if campaign_id is not None else None,
+            org_token=str(org_token) if org_token else None,
             molecule_smiles=raw.get("molecule_smiles"),
             molecule_name=raw.get("molecule_name"),
             molecule_external_id=raw.get("molecule_external_id"),
+            grid_id=str(raw["grid_id"]) if raw.get("grid_id") is not None else None,
+            grid_name=raw.get("grid_name"),
             run_metadata=raw.get("run_metadata") or {},
             run_defaults={k: v for k, v in run_defaults.items() if v is not None},
             notes=raw.get("notes"),

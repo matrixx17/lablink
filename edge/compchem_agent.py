@@ -68,6 +68,8 @@ from edge.campaign_context import (  # noqa: E402
     CampaignContext,
     CampaignContextResolver,
     CONFIG_FILENAME,
+    RUN_KIND_BY_HINT,
+    infer_from_path,
 )
 
 # QC runs server-side normally, but we also run it client-side so a failed
@@ -275,15 +277,41 @@ class CompChemFileProcessor:
         self._failure_counts[abs_path] = attempts
 
         try:
-            # 1) Resolve campaign context. Mandatory.
+            # 1) Resolve campaign context. Prefer explicit config; fall back
+            # to auditable path inference when no .lablink.yaml exists.
             context = self.resolver.resolve(abs_path)
             if context is None:
+                inferred = infer_from_path(abs_path, self.config.watch_folder)
                 logger.warning(
-                    "No %s found for %s — moving to .unclassified/",
-                    CONFIG_FILENAME, filename,
+                    "No .lablink.yaml found. Inferred from path: campaign_name=%s, "
+                    "molecule_label=%s, run_type=%s. Please verify in dashboard.",
+                    inferred.campaign_name,
+                    inferred.molecule_label,
+                    inferred.run_type,
                 )
-                self._move_to_unclassified(abs_path)
-                return False
+                if not inferred.campaign_name:
+                    logger.warning(
+                        "No %s found for %s and no campaigns/{name} component was inferred — moving to .unclassified/",
+                        CONFIG_FILENAME,
+                        filename,
+                    )
+                    self._move_to_unclassified(abs_path)
+                    return False
+                context = CampaignContext(
+                    org_id=self.config.org_id_override or "default-org",
+                    project="inferred",
+                    campaign=inferred.campaign_name,
+                    molecule_label=inferred.molecule_label,
+                    inferred_from_path=True,
+                    inferred_context=inferred.to_dict(),
+                    run_metadata={
+                        "inferred_run_index": inferred.run_index,
+                        "inferred_run_type": inferred.run_type,
+                    },
+                    run_defaults={
+                        "run_kind": RUN_KIND_BY_HINT.get(inferred.run_type or ""),
+                    },
+                )
 
             # 2) Classify file
             parser_name = detect_compchem_format(abs_path)
@@ -342,7 +370,11 @@ class CompChemFileProcessor:
             # 5) Upload raw bytes (presigned URL flow, same as existing agent)
             s3_key: Optional[str] = None
             if not self.config.dry_run:
-                presign = self._get_presigned_url(filename, context.org_id)
+                presign = self._get_presigned_url(
+                    filename,
+                    context.org_id or self.config.org_id_override or "default-org",
+                    context.org_token,
+                )
                 if presign is None:
                     self._handle_failure(abs_path, "presign failed", attempts)
                     return False
@@ -357,10 +389,16 @@ class CompChemFileProcessor:
                 parsed, context, s3_key, filename, parser_name, qc_result,
             )
             if not self.config.dry_run:
-                if not self._post_manifest(manifest):
+                self._resolve_grid_name(manifest)
+                if not self._post_manifest(manifest, context.org_token):
                     self._handle_failure(abs_path, "manifest post failed", attempts)
                     return False
             else:
+                if manifest.get("grid_name") and not manifest.get("grid_id"):
+                    logger.warning(
+                        "DRY-RUN: grid_name=%s cannot be resolved without API lookup",
+                        manifest.get("grid_name"),
+                    )
                 logger.info(
                     "DRY-RUN manifest for %s:\n%s",
                     filename,
@@ -418,12 +456,14 @@ class CompChemFileProcessor:
     # ------------------------------------------------------------------
 
     def _get_presigned_url(
-        self, filename: str, org_id: str,
+        self, filename: str, org_id: str, org_token: Optional[str] = None,
     ) -> Optional[Tuple[str, dict, str]]:
         try:
+            headers = {"Authorization": f"Bearer {org_token}"} if org_token else None
             resp = self.session.post(
                 f"{self.config.api_base}/api/v1/presign",
                 json={"filename": filename, "org_id": org_id},
+                headers=headers,
                 timeout=self.config.request_timeout,
             )
             if resp.status_code != 200:
@@ -450,14 +490,16 @@ class CompChemFileProcessor:
             logger.error("Upload error: %s", e)
             return False
 
-    def _post_manifest(self, manifest: Dict[str, Any]) -> bool:
+    def _post_manifest(self, manifest: Dict[str, Any], org_token: Optional[str] = None) -> bool:
         # Comp-chem manifest endpoint — wired up in Layer 2. For Layer 1
         # we expect HTTP 404 / 501 and treat it as "OK, endpoint not yet
         # implemented" so the agent can be exercised end-to-end now.
         try:
+            headers = {"Authorization": f"Bearer {org_token}"} if org_token else None
             resp = self.session.post(
                 f"{self.config.api_base}/api/v1/runs/ingest",
                 json=manifest,
+                headers=headers,
                 timeout=self.config.request_timeout,
             )
             if resp.status_code == 200:
@@ -467,6 +509,48 @@ class CompChemFileProcessor:
         except Exception as e:
             logger.error("Manifest post error: %s", e)
             return False
+
+    def _resolve_grid_name(self, manifest: Dict[str, Any]) -> None:
+        """Resolve .lablink.yaml grid_name to grid_id before run ingest."""
+        if manifest.get("grid_id") or not manifest.get("grid_name"):
+            return
+
+        campaign_id = manifest.get("campaign_id")
+        if not campaign_id:
+            logger.warning(
+                "grid_name=%s supplied but campaign_id is missing; proceeding without grid association",
+                manifest.get("grid_name"),
+            )
+            return
+
+        try:
+            resp = self.session.get(
+                f"{self.config.api_base}/api/v1/campaigns/{campaign_id}/grids",
+                params={"org_id": manifest.get("org_id")},
+                timeout=self.config.request_timeout,
+            )
+            if resp.status_code != 200:
+                logger.warning(
+                    "Could not list grids for campaign_id=%s: %s %s; proceeding without grid association",
+                    campaign_id,
+                    resp.status_code,
+                    resp.text[:300],
+                )
+                return
+
+            target = manifest.get("grid_name")
+            for grid in resp.json():
+                if grid.get("name") == target:
+                    manifest["grid_id"] = grid.get("id")
+                    logger.info("Resolved grid_name=%s -> grid_id=%s", target, manifest["grid_id"])
+                    return
+            logger.warning(
+                "No docking grid named %s found for campaign_id=%s; proceeding without grid association",
+                target,
+                campaign_id,
+            )
+        except Exception as e:
+            logger.warning("Grid lookup failed: %s; proceeding without grid association", e)
 
     # ------------------------------------------------------------------
 

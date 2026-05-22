@@ -1,29 +1,48 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { CartesianGrid, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
+import { useNavigate, useParams } from "react-router-dom";
+import {
+  CartesianGrid,
+  ResponsiveContainer,
+  Scatter,
+  ScatterChart,
+  Tooltip,
+  XAxis,
+  YAxis
+} from "recharts";
 import { api, Campaign, SarPoint, SarResponse } from "../api/client";
 import { useOrgId, withOrg } from "../components/Layout";
 import { Card, EmptyState, ErrorBox, PageHeader } from "../components/ui";
 import styles from "./pages.module.css";
 
-const COLORS: Record<string, string> = {
-  pass: "#16a34a",
-  completed: "#16a34a",
+const QC_COLORS: Record<string, string> = {
+  pass: "#22c55e",
+  completed: "#22c55e",
+  normal: "#22c55e",
   warn: "#f59e0b",
-  fail: "#dc2626",
-  failed: "#dc2626",
-  crashed: "#dc2626",
-  unknown: "#64748b"
+  fail: "#ef4444",
+  failed: "#ef4444",
+  crashed: "#ef4444",
+  unknown: "#94a3b8"
 };
 
 function colorFor(point: SarPoint) {
   const key = (point.qc_status || point.run_status || "unknown").toLowerCase();
-  return Object.entries(COLORS).find(([needle]) => key.includes(needle))?.[1] || COLORS.unknown;
+  const match = Object.entries(QC_COLORS).find(([needle]) => key.includes(needle));
+  return match?.[1] || QC_COLORS.unknown;
+}
+
+function metricLabel(metric: string) {
+  return metric
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 export default function SarPage() {
   const { id = "" } = useParams();
   const { orgId } = useOrgId();
+  const navigate = useNavigate();
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [sar, setSar] = useState<SarResponse | null>(null);
   const [xMetric, setXMetric] = useState("");
@@ -35,7 +54,8 @@ export default function SarPage() {
   }, [id, orgId]);
 
   useEffect(() => {
-    api.campaignSar(id, orgId, xMetric || undefined, yMetric || undefined)
+    api
+      .campaignSar(id, orgId, xMetric || undefined, yMetric || undefined)
       .then((result) => {
         setSar(result);
         if (!xMetric && result.metric_names[0]) setXMetric(result.metric_names[0]);
@@ -62,51 +82,132 @@ export default function SarPage() {
       <PageHeader
         eyebrow={campaign?.name || "SAR"}
         title="SAR scatter plot"
-        actions={<Link className={styles.secondaryButton} to={withOrg(`/campaigns/${id}`, orgId)}>Back to campaign</Link>}
+        actions={
+          <button
+            type="button"
+            className={styles.secondaryButton}
+            onClick={() => navigate(withOrg(`/campaigns/${id}`, orgId))}
+          >
+            ← Back to campaign
+          </button>
+        }
       />
       <Card>
-        <div className={styles.toolbar}>
+        <div className={styles.sarControls}>
           <label>
-            X axis{" "}
+            <span>X Axis</span>
             <select value={xMetric} onChange={(e) => setXMetric(e.target.value)}>
-              {metrics.map((m) => <option key={m} value={m}>{m}</option>)}
+              {metrics.map((m) => (
+                <option key={m} value={m}>
+                  {metricLabel(m)}
+                </option>
+              ))}
             </select>
           </label>
           <label>
-            Y axis{" "}
+            <span>Y Axis</span>
             <select value={yMetric} onChange={(e) => setYMetric(e.target.value)}>
-              {metrics.map((m) => <option key={m} value={m}>{m}</option>)}
+              {metrics.map((m) => (
+                <option key={m} value={m}>
+                  {metricLabel(m)}
+                </option>
+              ))}
             </select>
           </label>
+          {sar ? (
+            <div className={styles.countLine}>
+              <strong>{sar.points.length}</strong> points
+            </div>
+          ) : null}
         </div>
-        {!sar ? <EmptyState>Loading SAR data...</EmptyState> : null}
-        {sar && sar.points.length === 0 ? <EmptyState>No metric pairs available yet. Ingest at least two metrics per molecule/run.</EmptyState> : null}
+
+        {!sar ? <EmptyState>Loading SAR data…</EmptyState> : null}
+        {sar && sar.points.length === 0 ? (
+          <EmptyState>
+            No metric pairs available yet. Ingest at least two metrics per molecule/run.
+          </EmptyState>
+        ) : null}
         {sar && sar.points.length > 0 ? (
           <div className={styles.chart}>
             <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 20, right: 24, bottom: 28, left: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" dataKey="x" name={xMetric} label={{ value: xMetric, position: "bottom" }} />
-                <YAxis type="number" dataKey="y" name={yMetric} label={{ value: yMetric, angle: -90, position: "left" }} />
-                <ZAxis range={[80, 80]} />
+              <ScatterChart margin={{ top: 18, right: 28, bottom: 48, left: 44 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis
+                  type="number"
+                  dataKey="x"
+                  name={metricLabel(xMetric)}
+                  label={{ value: metricLabel(xMetric), position: "bottom", offset: 18 }}
+                  tick={{ fill: "#475569", fontSize: 12 }}
+                />
+                <YAxis
+                  type="number"
+                  dataKey="y"
+                  name={metricLabel(yMetric)}
+                  label={{
+                    value: metricLabel(yMetric),
+                    angle: -90,
+                    position: "left",
+                    offset: 20
+                  }}
+                  tick={{ fill: "#475569", fontSize: 12 }}
+                />
                 <Tooltip
                   cursor={{ strokeDasharray: "3 3" }}
                   content={({ active, payload }) => {
                     if (!active || !payload?.[0]) return null;
                     const p = payload[0].payload as SarPoint;
                     return (
-                      <div style={{ background: "white", border: "1px solid #cbd5e1", borderRadius: 10, padding: 10 }}>
-                        <strong>{p.molecule_external_id || p.molecule_name || `Molecule ${p.molecule_id}`}</strong>
-                        <div>{p.x_metric}: {p.x} {p.x_unit}</div>
-                        <div>{p.y_metric}: {p.y} {p.y_unit}</div>
-                        <div>Run {p.run_id} / {p.qc_status || p.run_status}</div>
-                        <Link className={styles.link} to={withOrg(`/molecules/${p.molecule_id}`, orgId)}>Open molecule</Link>
+                      <div className={styles.sarTooltip}>
+                        <strong>
+                          {p.molecule_external_id || p.molecule_name || `Molecule ${p.molecule_id}`}
+                        </strong>
+                        <div className={styles.tooltipRow}>
+                          <span>{metricLabel(p.x_metric)}</span>
+                          <strong>
+                            {p.x} {p.x_unit}
+                          </strong>
+                        </div>
+                        <div className={styles.tooltipRow}>
+                          <span>{metricLabel(p.y_metric)}</span>
+                          <strong>
+                            {p.y} {p.y_unit}
+                          </strong>
+                        </div>
+                        <div className={styles.tooltipRow}>
+                          <span>Run</span>
+                          <strong>
+                            #{p.run_id} · {p.qc_status || p.run_status}
+                          </strong>
+                        </div>
+                        <div className={styles.tooltipHint}>Click to open molecule →</div>
                       </div>
                     );
                   }}
                 />
                 {Object.entries(grouped).map(([label, points]) => (
-                  <Scatter key={label} name={label} data={points} fill={colorFor(points[0])} />
+                  <Scatter
+                    key={label}
+                    name={label}
+                    data={points}
+                    isAnimationActive={false}
+                    shape={(props: any) => (
+                      <circle
+                        cx={props.cx}
+                        cy={props.cy}
+                        r={6}
+                        fill={colorFor(props.payload as SarPoint)}
+                        stroke="#fff"
+                        strokeWidth={1.5}
+                        style={{ cursor: "pointer" }}
+                      />
+                    )}
+                    onClick={(point: any) => {
+                      const p = point?.payload as SarPoint | undefined;
+                      if (p?.molecule_id) {
+                        navigate(withOrg(`/molecules/${p.molecule_id}`, orgId));
+                      }
+                    }}
+                  />
                 ))}
               </ScatterChart>
             </ResponsiveContainer>
