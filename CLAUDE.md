@@ -349,6 +349,58 @@ make migrate
 
 ---
 
+## Computational Chemistry Data Model (pivot/compchem-campaigns)
+
+Layer 0 — data model only. No UI or parsing yet.
+
+### Entity Hierarchy
+
+```
+Organization (org_id — no table, inherited from auth)
+└── Project  (cc_projects)       — drug target or program (e.g. EGFR kinase)
+    └── Campaign  (cc_campaigns) — lead-opt or screening campaign (PRIMARY OBJECT)
+        ├── Run  (cc_runs)       — single simulation / calculation job
+        │   ├── RunInput   (cc_run_inputs)    — input files, configs, forcefields
+        │   ├── RunOutput  (cc_run_outputs)   — trajectories, result files, logs
+        │   ├── RunMetric  (cc_run_metrics)   — scalar results with mandatory units
+        │   └── RunLineage (cc_run_lineage)   — parent→child run DAG (provenance)
+        └── Molecule  (cc_molecules)          — chemical entity, deduplicated by InChIKey
+            ├── MoleculeProperty (cc_molecule_properties) — MW, LogP, TPSA, …
+            └── AssayResult      (cc_assay_results)       — links RunMetrics to molecules
+```
+
+Plus `cc_audit_events` — tamper-evident hash-chain log (same SHA256 pattern as `audit_logs`).
+
+All tables prefixed `cc_` to coexist with lab-instrument tables in the same schema.
+
+### Key Design Decisions
+
+- **Campaign is the first-class object.** Files are events; molecules accumulate runs over weeks.
+- **InChIKey deduplication.** `canonical_smiles` is always computed by RDKit at ingest. `inchi_key` is the unique key within `(org_id, campaign_id)`. `smiles_provided` stores the original as submitted (audit trail).
+- **Units are mandatory on every metric.** `RunMetric.unit` is `NOT NULL`. Mixed units (kcal/mol vs kJ/mol) surface at query time, never silently averaged.
+- **Reproducibility fingerprint.** `Run` carries `software_name`, `software_version`, `forcefield`, `config_hash` (SHA256 of full parameter set), `cli_args`, and `compute_environment` as first-class columns.
+- **Run provenance DAG.** `RunLineage` tracks parent→child dependencies (docking pose → MD input → FEP) without embedding graph logic in the run table.
+- **Separate audit chain.** `cc_audit_events` is independent of `audit_logs` so lab-instrument and comp-chem audit chains can be verified independently.
+- **`AssayResult` is the accumulation join.** To query "everything computed for scaffold X" join `cc_molecules → cc_assay_results → cc_run_metrics → cc_runs`.
+
+### New File
+
+| File | Purpose |
+|---|---|
+| `services/api/compchem_models.py` | All SQLAlchemy models + `log_cc_audit()` + `verify_cc_audit_chain()` |
+| `migrations/versions/20260522_000001_compchem_campaigns.py` | Migration `003_compchem` (revises `002_bioprocess`) |
+
+### What's Still Missing (Layer 1+)
+
+- SMILES canonicalisation at ingest (requires RDKit in the container)
+- FastAPI routes for campaign/run/molecule CRUD
+- Molecule registration service (dedup by InChIKey, property calculation)
+- Run submission + status polling
+- Campaign export (IND / partner data room bundle)
+- Scaffold query ("show me all runs for molecules matching substructure X")
+
+---
+
 ## What's Not Here Yet (Known Gaps)
 
 - **Authentication** — API key infra added (`auth.py`); set `AUTH_REQUIRED=true` in production; no OAuth2
@@ -365,5 +417,6 @@ make migrate
 
 | Date | Change |
 |---|---|
+| 2026-05-22 | Comp-chem Layer 0: Project/Campaign/Run/Molecule/AssayResult data model + migration 003 |
 | 2026-05-22 | Bioprocess pivot: runs, measurement_series, API keys, bioprocess parsers, domain QC, dashboard, auth, SOC 2 compliance endpoint; bug fixes in runs_service, timeseries_align, migration |
 | 2026-05-21 | Initial CLAUDE.md created from full codebase scan |
