@@ -142,3 +142,4 @@ frontend/**/*.tsbuildinfo
 # Claude/AI
 # ----------------------------------------
 .claude/
+JZ.md
