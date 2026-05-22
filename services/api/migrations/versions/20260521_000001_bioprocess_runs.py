@@ -82,6 +82,7 @@ def upgrade() -> None:
             sa.PrimaryKeyConstraint("id"),
         )
         op.create_index("ix_measurement_series_id", "measurement_series", ["id"], unique=False)
+        op.create_index("ix_measurement_series_org_id", "measurement_series", ["org_id"], unique=False)
         op.create_index("ix_measurement_series_run_id", "measurement_series", ["run_id"], unique=False)
         op.create_index("ix_series_run_field", "measurement_series", ["run_id", "field_name"], unique=False)
 
@@ -109,6 +110,7 @@ def downgrade() -> None:
     op.drop_table("api_keys")
     op.drop_index("ix_series_run_field", table_name="measurement_series")
     op.drop_index("ix_measurement_series_run_id", table_name="measurement_series")
+    op.drop_index("ix_measurement_series_org_id", table_name="measurement_series")
     op.drop_index("ix_measurement_series_id", table_name="measurement_series")
     op.drop_table("measurement_series")
     op.drop_index("ix_files_run_id", table_name="files")

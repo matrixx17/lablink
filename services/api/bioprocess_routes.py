@@ -199,7 +199,7 @@ def get_run_normalized(
     if not run:
         raise HTTPException(404, "Run not found")
     if format != "asm":
-        raise HTTPException(400, "Run-level export defaults to ASM; use format=asm")
+        raise HTTPException(400, f"Unsupported format '{format}' for run-level export. Only 'asm' is supported.")
     return transform_run_to_asm(db, run)
 
 

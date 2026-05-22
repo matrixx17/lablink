@@ -192,10 +192,11 @@ def aggregate_run_stats(db: Session, run_id: int) -> Dict[str, Any]:
         key = s.canonical_field or s.field_name
         if key in stats:
             key = f"{key}_{s.id}"
+        numeric_vals = [float(v) for v in (s.values or []) if v is not None]
         stats[key] = {
             "values": list(s.values or []),
-            "mean": float(sum(s.values) / len(s.values)) if s.values else None,
-            "n": len(s.values or []),
+            "mean": float(sum(numeric_vals) / len(numeric_vals)) if numeric_vals else None,
+            "n": len(numeric_vals),
         }
         stats[f"_time_{s.id}"] = {"values": list(s.time_values or [])}
     return stats

@@ -124,7 +124,7 @@ def align_run_series(
         aligned_fields.append({
             "field": field,
             "point_count": len(d_vals),
-            "time_range_h": [min(d_times), max(d_times)] if d_times else [],
+            "time_range_h": [min(d_times), max(d_times)] if len(d_times) > 0 else [],
             "samples": aligned,
         })
 
