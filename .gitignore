@@ -135,3 +135,5 @@ models/
 # Claude/AI
 # ----------------------------------------
 .claude/
+CLAUDE.md
+JZ.md
