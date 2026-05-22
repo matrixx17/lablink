@@ -24,6 +24,10 @@ from database import (
     Base, FileRecord, WebhookSubscription, AuditLog, Baseline,
     RunRecord, MeasurementSeries, ApiKey,
 )
+from compchem_models import (  # noqa: F401
+    Organization, Project, Campaign, Run, RunInput, RunOutput, RunMetric,
+    Molecule, MoleculeProperty, AssayResult, AuditEvent, RunLineage,
+)
 
 # Alembic Config object
 config = context.config

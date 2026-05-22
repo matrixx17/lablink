@@ -5,6 +5,7 @@ Revises: 002_bioprocess
 Create Date: 2026-05-22
 
 Tables created:
+  cc_organizations       — tenant / company records
   cc_projects             — drug target / program
   cc_campaigns            — lead-opt or screening campaign (primary object)
   cc_runs                 — single simulation / calculation job
@@ -38,6 +39,24 @@ def _table_names(conn) -> set:
 def upgrade() -> None:
     conn = op.get_bind()
     tables = _table_names(conn)
+
+    # ------------------------------------------------------------------
+    # cc_organizations
+    # ------------------------------------------------------------------
+    if "cc_organizations" not in tables:
+        op.create_table(
+            "cc_organizations",
+            sa.Column("id", sa.Integer(), nullable=False),
+            sa.Column("org_id", sa.String(128), nullable=False),
+            sa.Column("name", sa.String(256), nullable=True),
+            sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+            sa.PrimaryKeyConstraint("id"),
+            sa.UniqueConstraint("org_id", name="uq_cc_organizations_org_id"),
+        )
+        op.create_index("ix_cc_organizations_id", "cc_organizations", ["id"])
+        op.create_index("ix_cc_organizations_org_id", "cc_organizations", ["org_id"])
 
     # ------------------------------------------------------------------
     # cc_projects

@@ -7,3 +7,6 @@ boto3==1.35.36
 # Comp-chem agent additions
 PyYAML==6.0.2
 cclib==1.8.1
+rdkit==2024.3.5
+MDAnalysis==2.7.0
+-e ../packages/moltrack-parsers

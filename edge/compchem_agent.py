@@ -51,6 +51,10 @@ from watchdog.observers import Observer
 
 # Allow importing parsers/ from the repo root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "packages", "moltrack-parsers", "src",
+))
 
 from parsers.compchem import (  # noqa: E402
     CompChemParsedResult,
@@ -59,6 +63,7 @@ from parsers.compchem import (  # noqa: E402
     detect_compchem_format,
     parse_compchem_file,
 )
+from moltrack_parsers import parse_file as moltrack_parse_file  # noqa: E402
 from edge.campaign_context import (  # noqa: E402
     CampaignContext,
     CampaignContextResolver,
@@ -77,6 +82,11 @@ try:
 except ImportError:
     _AGENT_QC_AVAILABLE = False
     compchem_qc_summary = None  # type: ignore
+
+try:
+    from rdkit import Chem  # type: ignore  # noqa: E402
+except ImportError:
+    Chem = None  # type: ignore
 
 
 logging.basicConfig(
@@ -168,6 +178,17 @@ def sha256_file(path: str, chunk_size: int = 1024 * 1024) -> str:
                 break
             h.update(chunk)
     return h.hexdigest()
+
+
+def canonicalize_smiles(smiles: Optional[str]) -> Optional[str]:
+    """Canonicalize molecule SMILES on the edge before API submission."""
+    if not smiles or Chem is None:
+        return smiles
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        logger.warning("RDKit could not parse molecule_smiles=%r; sending original", smiles)
+        return smiles
+    return Chem.MolToSmiles(mol, canonical=True)
 
 
 def classify_artifact_role(parsed: CompChemParsedResult, filename: str) -> str:
@@ -273,13 +294,20 @@ class CompChemFileProcessor:
                 logger.info("[%s] %s -> parser=unknown (will upload raw)",
                             context.campaign, filename)
 
-            # 3) Parse (extract metadata) — parser never raises; bad files
+            # 3) Parse with the standalone moltrack-parsers package first.
+            # This is the cloud-free parser surface we can publish separately;
+            # the legacy parser adapter below preserves the existing manifest
+            # shape consumed by the API.
+            moltrack_result = moltrack_parse_file(abs_path)
+
+            # 3b) Parse (extract metadata) — parser never raises; bad files
             # come back with termination_status=UNKNOWN
             parsed = parse_compchem_file(abs_path)
+            parsed.metadata.setdefault("moltrack_parse", moltrack_result.to_dict())
 
             # 4) Hash before upload — tamper-evidence anchor
             try:
-                parsed.file_hash = sha256_file(abs_path)
+                parsed.file_hash = moltrack_result.file_hash or sha256_file(abs_path)
             except OSError as e:
                 logger.error("Failed to hash %s: %s", filename, e)
                 self._handle_failure(abs_path, f"hash failed: {e}", attempts)
@@ -378,6 +406,8 @@ class CompChemFileProcessor:
 
         # Layer in campaign context (org_id, project, campaign, molecule, run defaults)
         context.merge_into_manifest(manifest)
+        if manifest.get("molecule_smiles"):
+            manifest["molecule_smiles"] = canonicalize_smiles(manifest.get("molecule_smiles"))
 
         # Org override flag — wins over yaml when set
         if self.config.org_id_override:
@@ -426,19 +456,11 @@ class CompChemFileProcessor:
         # implemented" so the agent can be exercised end-to-end now.
         try:
             resp = self.session.post(
-                f"{self.config.api_base}/api/v1/cc/events",
+                f"{self.config.api_base}/api/v1/runs/ingest",
                 json=manifest,
                 timeout=self.config.request_timeout,
             )
             if resp.status_code == 200:
-                return True
-            if resp.status_code in (404, 501):
-                logger.warning(
-                    "Comp-chem events endpoint not yet implemented (%s). "
-                    "Manifest accepted by Layer 1 logic; will succeed once "
-                    "Layer 2 routes are deployed.",
-                    resp.status_code,
-                )
                 return True
             logger.error("Manifest post failed: %s %s", resp.status_code, resp.text[:500])
             return False

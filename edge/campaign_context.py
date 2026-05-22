@@ -65,9 +65,11 @@ class CampaignContext:
     org_id: str
     project: str
     campaign: str
+    campaign_id: Optional[int] = None
     molecule_smiles: Optional[str] = None
     molecule_name: Optional[str] = None
     molecule_external_id: Optional[str] = None
+    run_metadata: Dict[str, Any] = field(default_factory=dict)
     run_defaults: Dict[str, Any] = field(default_factory=dict)
     notes: Optional[str] = None
     config_path: Optional[str] = None  # absolute path of the .lablink.yaml that produced this
@@ -78,6 +80,8 @@ class CampaignContext:
         manifest.setdefault("org_id", self.org_id)
         manifest.setdefault("project", self.project)
         manifest.setdefault("campaign", self.campaign)
+        if self.campaign_id is not None and not manifest.get("campaign_id"):
+            manifest["campaign_id"] = self.campaign_id
         if self.molecule_smiles and not manifest.get("molecule_smiles"):
             manifest["molecule_smiles"] = self.molecule_smiles
         if self.molecule_name and not manifest.get("molecule_name"):
@@ -86,6 +90,8 @@ class CampaignContext:
             manifest["molecule_external_id"] = self.molecule_external_id
         if self.notes and not manifest.get("notes"):
             manifest["notes"] = self.notes
+        if self.run_metadata and not manifest.get("run_metadata"):
+            manifest["run_metadata"] = self.run_metadata
         if self.config_path:
             manifest.setdefault("context_source", self.config_path)
         # Run defaults: fill in software_name, forcefield, compute_environment, etc.
@@ -176,15 +182,17 @@ class CampaignContextResolver:
             logger.error("%s: top-level must be a mapping, got %s", config_path, type(raw).__name__)
             return None
 
-        # Required fields
+        # Required fields. campaign_id is accepted as an explicit DB target,
+        # but project/campaign names remain useful for human-readable context
+        # and for first-run bootstrap when no ID exists yet.
         org_id = raw.get("org_id")
         project = raw.get("project")
         campaign = raw.get("campaign")
         missing = [k for k, v in (
             ("org_id", org_id),
-            ("project", project),
-            ("campaign", campaign),
         ) if not v]
+        if not raw.get("campaign_id"):
+            missing.extend([k for k, v in (("project", project), ("campaign", campaign)) if not v])
         if missing:
             logger.error(
                 "%s missing required keys: %s. File will be uploaded with "
@@ -201,11 +209,13 @@ class CampaignContextResolver:
 
         return CampaignContext(
             org_id=str(org_id),
-            project=str(project),
-            campaign=str(campaign),
+            project=str(project or ""),
+            campaign=str(campaign or ""),
+            campaign_id=int(raw["campaign_id"]) if raw.get("campaign_id") is not None else None,
             molecule_smiles=raw.get("molecule_smiles"),
             molecule_name=raw.get("molecule_name"),
             molecule_external_id=raw.get("molecule_external_id"),
+            run_metadata=raw.get("run_metadata") or {},
             run_defaults={k: v for k, v in run_defaults.items() if v is not None},
             notes=raw.get("notes"),
             config_path=config_path,

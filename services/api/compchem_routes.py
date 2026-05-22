@@ -25,7 +25,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -40,6 +40,7 @@ from compchem_models import (
     Campaign,
     Molecule,
     MoleculeProperty,
+    Organization,
     Project,
     Run,
     RunInput,
@@ -49,6 +50,7 @@ from compchem_models import (
     verify_cc_audit_chain,
 )
 from database import SessionLocal
+from storage import s3, S3_BUCKET
 
 logger = logging.getLogger(__name__)
 
@@ -207,8 +209,10 @@ class RunDetailOut(BaseModel):
     software_name: Optional[str]
     software_version: Optional[str]
     forcefield: Optional[str]
+    config_hash: Optional[str] = None
     cli_args: Optional[str]
     compute_environment: Optional[str]
+    compute_details: Optional[Dict[str, Any]] = None
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     wall_time_s: Optional[float]
@@ -218,12 +222,80 @@ class RunDetailOut(BaseModel):
     metrics: List[RunMetricOut] = []
     qc: Optional[Dict[str, Any]] = None
     client_qc: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
     audit_events: List[Dict[str, Any]] = []
+
+
+class CampaignRunOut(BaseModel):
+    id: int
+    molecule_id: Optional[int]
+    molecule_name: Optional[str]
+    molecule_external_id: Optional[str]
+    run_kind: str
+    status: str
+    qc_status: Optional[str]
+    software_name: Optional[str]
+    software_version: Optional[str]
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    wall_time_s: Optional[float]
+    metric_count: int
+
+
+class SarPoint(BaseModel):
+    molecule_id: int
+    molecule_name: Optional[str]
+    molecule_external_id: Optional[str]
+    canonical_smiles: str
+    run_id: int
+    run_status: str
+    qc_status: Optional[str]
+    x: float
+    y: float
+    x_metric: str
+    y_metric: str
+    x_unit: str
+    y_unit: str
+
+
+class SarResponse(BaseModel):
+    metric_names: List[str]
+    points: List[SarPoint]
 
 
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+
+@router.get("/api/v1/campaigns", response_model=List[CampaignOut])
+def list_campaigns(
+    org_id: str = Query("default-org"),
+    status: Optional[str] = None,
+    project_name: Optional[str] = None,
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    """List campaigns for the dashboard landing page."""
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
+
+    q = (
+        db.query(Campaign, Project.name.label("project_name"))
+        .join(Project, Project.id == Campaign.project_id)
+        .filter(Campaign.org_id == org_id)
+    )
+    if status:
+        q = q.filter(Campaign.status == status)
+    if project_name:
+        q = q.filter(Project.name == project_name)
+
+    rows = q.order_by(Campaign.started_at.desc().nullslast(), Campaign.id.desc()).all()
+    return [
+        _campaign_to_out(db, campaign, project_name=pname)
+        for campaign, pname in rows
+    ]
+
 
 @router.post("/api/v1/campaigns", response_model=CampaignOut)
 def create_campaign(
@@ -234,6 +306,11 @@ def create_campaign(
     """Create a campaign (and parent project if it doesn't exist)."""
     org_id, actor = auth
     require_org_access(body.org_id, org_id)
+
+    org = db.query(Organization).filter(Organization.org_id == body.org_id).first()
+    if org is None:
+        db.add(Organization(org_id=body.org_id, name=body.org_id))
+        db.commit()
 
     # Project: get-or-create, applying any provided details
     project = (
@@ -311,6 +388,154 @@ def create_campaign(
     )
 
     return _campaign_to_out(db, campaign, project_name=project.name)
+
+
+@router.get("/api/v1/campaigns/{campaign_id}/runs", response_model=List[CampaignRunOut])
+def list_campaign_runs(
+    campaign_id: int,
+    org_id: str = Query("default-org"),
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    """List all runs in a campaign with molecule and QC summaries."""
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
+    _load_campaign(db, campaign_id, org_id)
+
+    q = (
+        db.query(Run, Molecule)
+        .outerjoin(Molecule, Molecule.id == Run.molecule_id)
+        .filter(Run.org_id == org_id, Run.campaign_id == campaign_id)
+    )
+    if status:
+        q = q.filter(Run.status == status)
+
+    runs = q.order_by(Run.created_at.desc(), Run.id.desc()).all()
+    run_ids = [r.id for r, _ in runs]
+    metric_counts = dict(
+        db.query(RunMetric.run_id, func.count(RunMetric.id))
+        .filter(RunMetric.run_id.in_(run_ids))
+        .group_by(RunMetric.run_id)
+        .all()
+    ) if run_ids else {}
+
+    out: List[CampaignRunOut] = []
+    for run, mol in runs:
+        server_qc = (run.extra_metadata or {}).get("server_qc") or {}
+        out.append(CampaignRunOut(
+            id=run.id,
+            molecule_id=run.molecule_id,
+            molecule_name=mol.name if mol else None,
+            molecule_external_id=mol.external_id if mol else None,
+            run_kind=run.run_kind,
+            status=run.status,
+            qc_status=server_qc.get("overall_status"),
+            software_name=run.software_name,
+            software_version=run.software_version,
+            started_at=run.started_at,
+            completed_at=run.completed_at,
+            wall_time_s=run.wall_time_s,
+            metric_count=int(metric_counts.get(run.id, 0)),
+        ))
+    return out
+
+
+@router.get("/api/v1/campaigns/{campaign_id}/sar", response_model=SarResponse)
+def get_campaign_sar(
+    campaign_id: int,
+    org_id: str = Query("default-org"),
+    x_metric: Optional[str] = Query(None),
+    y_metric: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    """
+    SAR scatter data: one point per molecule/run containing selected metric pair.
+
+    If no axes are provided, the first two available metrics are selected.
+    """
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
+    _load_campaign(db, campaign_id, org_id)
+
+    metric_names = [
+        name for (name,) in (
+            db.query(AssayResult.metric_name)
+            .join(Molecule, Molecule.id == AssayResult.molecule_id)
+            .filter(Molecule.campaign_id == campaign_id, AssayResult.org_id == org_id)
+            .distinct()
+            .order_by(AssayResult.metric_name.asc())
+            .all()
+        )
+    ]
+    if not metric_names:
+        return SarResponse(metric_names=[], points=[])
+
+    x_name = x_metric or metric_names[0]
+    y_name = y_metric or (metric_names[1] if len(metric_names) > 1 else metric_names[0])
+
+    rows = (
+        db.query(
+            Molecule.id.label("molecule_id"),
+            Molecule.name,
+            Molecule.external_id,
+            Molecule.canonical_smiles,
+            Run.id.label("run_id"),
+            Run.status.label("run_status"),
+            Run.extra_metadata,
+            AssayResult.metric_name,
+            AssayResult.value,
+            AssayResult.unit,
+        )
+        .join(RunMetric, RunMetric.id == AssayResult.run_metric_id)
+        .join(Run, Run.id == RunMetric.run_id)
+        .join(Molecule, Molecule.id == AssayResult.molecule_id)
+        .filter(
+            Molecule.campaign_id == campaign_id,
+            AssayResult.org_id == org_id,
+            AssayResult.metric_name.in_([x_name, y_name]),
+        )
+        .all()
+    )
+
+    grouped: Dict[tuple, Dict[str, Any]] = {}
+    for row in rows:
+        key = (row.molecule_id, row.run_id)
+        entry = grouped.setdefault(key, {
+            "molecule_id": row.molecule_id,
+            "molecule_name": row.name,
+            "molecule_external_id": row.external_id,
+            "canonical_smiles": row.canonical_smiles,
+            "run_id": row.run_id,
+            "run_status": row.run_status,
+            "qc_status": ((row.extra_metadata or {}).get("server_qc") or {}).get("overall_status"),
+            "metrics": {},
+        })
+        entry["metrics"][row.metric_name] = {"value": row.value, "unit": row.unit}
+
+    points: List[SarPoint] = []
+    for entry in grouped.values():
+        metrics = entry["metrics"]
+        if x_name not in metrics or y_name not in metrics:
+            continue
+        points.append(SarPoint(
+            molecule_id=entry["molecule_id"],
+            molecule_name=entry["molecule_name"],
+            molecule_external_id=entry["molecule_external_id"],
+            canonical_smiles=entry["canonical_smiles"],
+            run_id=entry["run_id"],
+            run_status=entry["run_status"],
+            qc_status=entry["qc_status"],
+            x=float(metrics[x_name]["value"]),
+            y=float(metrics[y_name]["value"]),
+            x_metric=x_name,
+            y_metric=y_name,
+            x_unit=metrics[x_name]["unit"],
+            y_unit=metrics[y_name]["unit"],
+        ))
+
+    return SarResponse(metric_names=metric_names, points=points)
 
 
 @router.get("/api/v1/campaigns/{campaign_id}", response_model=CampaignOut)
@@ -561,6 +786,48 @@ def get_molecule(
     )
 
 
+@router.get("/api/v1/molecules/{molecule_id}/structure.svg")
+def get_molecule_structure_svg(
+    molecule_id: int,
+    org_id: str = Query("default-org"),
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    """Render a molecule as SVG using server-side RDKit."""
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
+
+    mol_row = (
+        db.query(Molecule)
+        .filter(Molecule.id == molecule_id, Molecule.org_id == org_id)
+        .first()
+    )
+    if not mol_row:
+        raise HTTPException(404, "Molecule not found")
+
+    try:
+        from rdkit import Chem  # type: ignore
+        from rdkit.Chem import rdDepictor  # type: ignore
+        from rdkit.Chem.Draw import rdMolDraw2D  # type: ignore
+    except ImportError:
+        svg = (
+            "<svg xmlns='http://www.w3.org/2000/svg' width='360' height='220'>"
+            "<rect width='100%' height='100%' fill='#f8fafc'/>"
+            "<text x='24' y='110' font-size='14' fill='#64748b'>RDKit unavailable</text>"
+            "</svg>"
+        )
+        return Response(content=svg, media_type="image/svg+xml")
+
+    mol = Chem.MolFromSmiles(mol_row.canonical_smiles)
+    if mol is None:
+        raise HTTPException(422, "Stored SMILES could not be parsed by RDKit")
+    rdDepictor.Compute2DCoords(mol)
+    drawer = rdMolDraw2D.MolDraw2DSVG(360, 240)
+    drawer.DrawMolecule(mol)
+    drawer.FinishDrawing()
+    return Response(content=drawer.GetDrawingText(), media_type="image/svg+xml")
+
+
 @router.get("/api/v1/runs/{run_id}", response_model=RunDetailOut)
 def get_run(
     run_id: int,
@@ -635,8 +902,10 @@ def get_run(
         software_name=run.software_name,
         software_version=run.software_version,
         forcefield=run.forcefield,
+        config_hash=run.config_hash,
         cli_args=run.cli_args,
         compute_environment=run.compute_environment,
+        compute_details=run.compute_details,
         started_at=run.started_at,
         completed_at=run.completed_at,
         wall_time_s=run.wall_time_s,
@@ -646,8 +915,41 @@ def get_run(
         metrics=metrics,
         qc=run_meta.get("server_qc"),
         client_qc=run_meta.get("client_qc"),
+        metadata=run_meta,
         audit_events=audit_out,
     )
+
+
+@router.get("/api/v1/artifacts/{artifact_type}/{artifact_id}/download")
+def get_artifact_download_url(
+    artifact_type: str,
+    artifact_id: int,
+    org_id: str = Query("default-org"),
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    """Return a short-lived presigned URL for a raw input/output artifact."""
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
+
+    if artifact_type == "input":
+        artifact = db.query(RunInput).filter(RunInput.id == artifact_id, RunInput.org_id == org_id).first()
+    elif artifact_type == "output":
+        artifact = db.query(RunOutput).filter(RunOutput.id == artifact_id, RunOutput.org_id == org_id).first()
+    else:
+        raise HTTPException(400, "artifact_type must be 'input' or 'output'")
+
+    if not artifact:
+        raise HTTPException(404, "Artifact not found")
+    if not artifact.s3_key:
+        raise HTTPException(404, "Artifact has no stored object key")
+
+    url = s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": S3_BUCKET, "Key": artifact.s3_key},
+        ExpiresIn=900,
+    )
+    return {"url": url, "expires_in_seconds": 900, "filename": artifact.filename}
 
 
 @router.get("/api/v1/campaigns/{campaign_id}/export")
@@ -759,6 +1061,49 @@ def export_campaign(
         )
 
     raise HTTPException(400, f"Unsupported format '{format}'. Use 'csv' or 'parquet'.")
+
+
+@router.get("/api/v1/campaigns/{campaign_id}/audit")
+def list_campaign_audit_events(
+    campaign_id: int,
+    org_id: str = Query("default-org"),
+    limit: int = Query(200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    """Human-readable campaign audit feed for the dashboard."""
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
+    _load_campaign(db, campaign_id, org_id)
+
+    cid_str = str(campaign_id)
+    rows = (
+        db.query(AuditEvent)
+        .filter(
+            AuditEvent.org_id == org_id,
+            (
+                ((AuditEvent.entity_type == "campaign") & (AuditEvent.entity_id == cid_str))
+                | (AuditEvent.details["campaign_id"].astext == cid_str)
+            ),
+        )
+        .order_by(AuditEvent.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": a.id,
+            "timestamp": a.timestamp.isoformat() if a.timestamp else None,
+            "action": a.action,
+            "entity_type": a.entity_type,
+            "entity_id": a.entity_id,
+            "actor": a.actor,
+            "details": a.details,
+            "previous_hash": a.previous_hash,
+            "record_hash": a.record_hash,
+        }
+        for a in rows
+    ]
 
 
 @router.post("/api/v1/audit/verify/{campaign_id}")

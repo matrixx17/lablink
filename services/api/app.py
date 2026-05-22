@@ -124,8 +124,8 @@ app.add_middleware(
     expose_headers=["X-Request-ID"],
 )
 
-app.include_router(bioprocess_router)
 app.include_router(compchem_router)
+app.include_router(bioprocess_router)
 
 
 # Request ID Middleware

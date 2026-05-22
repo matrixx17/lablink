@@ -1,0 +1,49 @@
+import { Link, NavLink, Outlet, useSearchParams } from "react-router-dom";
+import styles from "./Layout.module.css";
+
+export function useOrgId() {
+  const [params, setParams] = useSearchParams();
+  const orgId = params.get("org") || "default-org";
+  const setOrgId = (next: string) => {
+    const copy = new URLSearchParams(params);
+    copy.set("org", next || "default-org");
+    setParams(copy, { replace: true });
+  };
+  return { orgId, setOrgId };
+}
+
+export function withOrg(path: string, orgId: string) {
+  return `${path}${path.includes("?") ? "&" : "?"}org=${encodeURIComponent(orgId)}`;
+}
+
+export default function Layout() {
+  const { orgId, setOrgId } = useOrgId();
+  return (
+    <div className={styles.shell}>
+      <aside className={styles.sidebar}>
+        <Link to={withOrg("/campaigns", orgId)} className={styles.brand}>
+          <span className={styles.mark}>LL</span>
+          <div>
+            <strong>LabLink</strong>
+            <span>Comp-Chem</span>
+          </div>
+        </Link>
+        <nav className={styles.nav}>
+          <NavLink to={withOrg("/campaigns", orgId)}>Campaigns</NavLink>
+        </nav>
+        <div className={styles.orgBox}>
+          <label htmlFor="org">Org ID</label>
+          <input
+            id="org"
+            value={orgId}
+            onChange={(event) => setOrgId(event.target.value)}
+            placeholder="default-org"
+          />
+        </div>
+      </aside>
+      <main className={styles.main}>
+        <Outlet />
+      </main>
+    </div>
+  );
+}

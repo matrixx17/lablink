@@ -183,6 +183,15 @@ test-watch: ## Run tests in watch mode
 	@echo "$(GREEN)Running tests in watch mode...$(NC)"
 	docker compose exec api pytest-watch
 
+compchem-ui-install: ## Install comp-chem React dashboard dependencies
+	cd frontend/compchem-dashboard && npm install
+
+compchem-ui-dev: ## Start comp-chem React dashboard on http://localhost:5173
+	cd frontend/compchem-dashboard && npm run dev
+
+compchem-ui-build: ## Build comp-chem React dashboard
+	cd frontend/compchem-dashboard && npm run build
+
 lint: ## Run linting
 	@echo "$(GREEN)Running linter...$(NC)"
 	docker compose exec api ruff check .

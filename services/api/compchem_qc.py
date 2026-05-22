@@ -65,6 +65,7 @@ identical to bioprocess_qc's logic.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -72,6 +73,16 @@ import numpy as np
 from qc import qc_summary, QCStatus
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class QCResult:
+    """Single chemistry QC check result."""
+    status: str
+    message: str
+    value: Optional[float] = None
+    rule: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -813,6 +824,79 @@ def _md_findings(extras: Dict[str, Any], thresholds: Dict[str, Any]) -> List[Dic
 def _combine_status(a: QCStatus, b: QCStatus) -> QCStatus:
     order = {QCStatus.PASS: 0, QCStatus.WARN: 1, QCStatus.FAIL: 2}
     return a if order[a] >= order[b] else b
+
+
+class ChemistryQCEngine:
+    """
+    Run-type dispatcher for chemistry QC.
+
+    Public interface requested by the product spec. The function-level checks
+    above stay as the implementation so API behavior and test coverage remain
+    stable.
+    """
+
+    def __init__(
+        self,
+        run_type: str,
+        thresholds: Optional[Dict[str, Any]] = None,
+    ):
+        self.run_type = (run_type or "other").lower()
+        self.thresholds = _merge_thresholds(DEFAULT_THRESHOLDS, thresholds or {})
+
+    def run(
+        self,
+        parsed: Dict[str, Any],
+        molecule_smiles: Optional[str] = None,
+        historical_baselines: Optional[Dict[str, Dict[str, Any]]] = None,
+        md_extras: Optional[Dict[str, Any]] = None,
+        dft_extras: Optional[Dict[str, Any]] = None,
+        molecule_properties: Optional[Dict[str, float]] = None,
+    ) -> List[QCResult]:
+        parsed_for_run = dict(parsed or {})
+        parsed_for_run["run_kind"] = self.run_type
+        summary = compchem_qc_summary(
+            parsed=parsed_for_run,
+            historical_baselines=historical_baselines,
+            molecule_smiles=molecule_smiles,
+            molecule_properties=molecule_properties,
+            md_extras=md_extras,
+            dft_extras=dft_extras,
+            thresholds=self.thresholds,
+        )
+        return [self._finding_to_result(f) for f in summary.get("domain_findings", [])]
+
+    def summary(self, parsed: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
+        parsed_for_run = dict(parsed or {})
+        parsed_for_run["run_kind"] = self.run_type
+        return compchem_qc_summary(parsed=parsed_for_run, thresholds=self.thresholds, **kwargs)
+
+    @staticmethod
+    def _finding_to_result(finding: Dict[str, Any]) -> QCResult:
+        details = finding.get("details") or {}
+        numeric_value = None
+        for key in (
+            "value",
+            "max_rmsd_A",
+            "variance_ratio",
+            "scf_cycles",
+            "imaginary_frequency_count",
+            "mw",
+            "logp",
+            "tpsa",
+        ):
+            if key in details:
+                try:
+                    numeric_value = float(details[key])
+                    break
+                except (TypeError, ValueError):
+                    pass
+        return QCResult(
+            status=finding.get("severity", "warn"),
+            message=finding.get("message", ""),
+            value=numeric_value,
+            rule=finding.get("rule"),
+            details=details,
+        )
 
 
 def _merge_thresholds(defaults: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:

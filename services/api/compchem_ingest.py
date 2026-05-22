@@ -35,6 +35,7 @@ from compchem_models import (
     Campaign,
     Molecule,
     MoleculeProperty,
+    Organization,
     Project,
     Run,
     RunInput,
@@ -103,6 +104,17 @@ def compute_molecule_properties(smiles: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Find-or-create helpers
 # ---------------------------------------------------------------------------
+
+def get_or_create_organization(db: Session, org_id: str) -> Organization:
+    org = db.query(Organization).filter(Organization.org_id == org_id).first()
+    if org:
+        return org
+    org = Organization(org_id=org_id, name=org_id)
+    db.add(org)
+    db.commit()
+    db.refresh(org)
+    return org
+
 
 def get_or_create_project(db: Session, org_id: str, name: str, actor: str) -> Project:
     proj = (
@@ -334,20 +346,36 @@ def ingest_run_manifest(
     org_id = manifest.get("org_id")
     project_name = manifest.get("project")
     campaign_name = manifest.get("campaign")
-    if not (org_id and project_name and campaign_name):
-        raise ValueError("manifest must include org_id, project, and campaign")
+    campaign_id = manifest.get("campaign_id")
+    if not org_id:
+        raise ValueError("manifest must include org_id")
+    if not campaign_id and not (project_name and campaign_name):
+        raise ValueError("manifest must include campaign_id or both project and campaign")
 
     parsed = manifest.get("parsed") or {}
     if not parsed:
         raise ValueError("manifest must include a 'parsed' block")
 
-    # --- Project / Campaign ----------------------------------------------
-    project = get_or_create_project(db, org_id, project_name, actor)
-    campaign = get_or_create_campaign(
-        db, org_id, project.id, campaign_name, actor,
-        campaign_type=manifest.get("campaign_type"),
-        description=manifest.get("notes"),
-    )
+    # --- Organization / Project / Campaign -------------------------------
+    get_or_create_organization(db, org_id)
+    if campaign_id:
+        campaign = (
+            db.query(Campaign)
+            .filter(Campaign.id == int(campaign_id), Campaign.org_id == org_id)
+            .first()
+        )
+        if not campaign:
+            raise ValueError(f"campaign_id={campaign_id} not found for org_id={org_id}")
+        project = db.query(Project).filter(Project.id == campaign.project_id).first()
+        if not project:
+            raise ValueError(f"project for campaign_id={campaign_id} not found")
+    else:
+        project = get_or_create_project(db, org_id, project_name, actor)
+        campaign = get_or_create_campaign(
+            db, org_id, project.id, campaign_name, actor,
+            campaign_type=manifest.get("campaign_type"),
+            description=manifest.get("notes"),
+        )
 
     # --- Molecule (optional — not every run is per-molecule) ------------
     molecule: Optional[Molecule] = None
@@ -392,7 +420,8 @@ def ingest_run_manifest(
         compute_environment=manifest.get("compute_environment"),
         compute_details={
             "cluster_name": manifest.get("cluster_name"),
-        } if manifest.get("cluster_name") else None,
+            **(manifest.get("run_metadata") or {}),
+        } if (manifest.get("cluster_name") or manifest.get("run_metadata")) else None,
         started_at=started,
         completed_at=completed,
         wall_time_s=parsed.get("wall_time_s"),
@@ -403,6 +432,7 @@ def ingest_run_manifest(
             "parser_name": manifest.get("parser_name"),
             "context_source": manifest.get("context_source"),
             "parse_warnings": parsed.get("parse_warnings") or [],
+            "run_metadata": manifest.get("run_metadata") or {},
         },
     )
     db.add(run)

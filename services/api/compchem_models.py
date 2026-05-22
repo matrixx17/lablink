@@ -2,7 +2,7 @@
 Computational chemistry data model — Layer 0.
 
 Hierarchy:
-    Organization (org_id string, no table — inherited from existing auth)
+    Organization
     └── Project  (drug target or program)
         └── Campaign  (lead-opt or screening campaign against a target)
             ├── Run  (single simulation / calculation job)
@@ -147,8 +147,21 @@ class AuditEventAction(PyEnum):
 
 
 # ---------------------------------------------------------------------------
-# Core hierarchy: Project → Campaign
+# Core hierarchy: Organization → Project → Campaign
 # ---------------------------------------------------------------------------
+
+class Organization(Base):
+    """Tenant / company that owns projects, campaigns, and audit events."""
+    __tablename__ = "cc_organizations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    org_id = Column(String(128), nullable=False, unique=True, index=True)
+    name = Column(String(256), nullable=True)
+    extra_metadata = Column("metadata", JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
 
 class Project(Base):
     """

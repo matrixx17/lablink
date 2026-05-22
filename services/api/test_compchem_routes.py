@@ -70,12 +70,12 @@ SQLiteTypeCompiler.visit_JSONB = _visit_JSONB  # type: ignore[attr-defined]
 # lab-instrument webhook table which uses ARRAY (postgres-only); we don't
 # need it for these tests.
 from compchem_models import (  # noqa: E402
-    Project, Campaign, Run, RunInput, RunOutput, RunMetric, RunLineage,
+    Organization, Project, Campaign, Run, RunInput, RunOutput, RunMetric, RunLineage,
     Molecule, MoleculeProperty, AssayResult, AuditEvent,
 )
 _cc_tables = [
     t.__table__ for t in (
-        Project, Campaign, Molecule, Run, RunInput, RunOutput,
+        Organization, Project, Campaign, Molecule, Run, RunInput, RunOutput,
         RunMetric, RunLineage, MoleculeProperty, AssayResult, AuditEvent,
     )
 ]
