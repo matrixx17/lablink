@@ -25,6 +25,7 @@ from runs_service import (
     rebuild_run_alignment, run_qc_for_manifest, update_run_qc,
 )
 from bioprocess_routes import router as bioprocess_router
+from compchem_routes import router as compchem_router
 from storage import get_presigned_post, ensure_bucket, s3 as s3_client, S3_BUCKET as BUCKET
 from mapping import guess_schema
 from qc import qc_summary
@@ -124,6 +125,7 @@ app.add_middleware(
 )
 
 app.include_router(bioprocess_router)
+app.include_router(compchem_router)
 
 
 # Request ID Middleware

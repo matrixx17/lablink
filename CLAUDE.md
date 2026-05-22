@@ -574,6 +574,68 @@ Run with: `cd services/api && python test_compchem_qc.py`
 
 ---
 
+## Comp-Chem Layer 2 — API surface (pivot/compchem-campaigns)
+
+FastAPI routes that tie Layers 0/1/3 together. Mirrors the bioprocess_routes pattern (router included in `app.py`, every route depends on `resolve_auth`, every write is audited via `cc_audit_events`).
+
+### New Files
+
+| File | Purpose |
+|---|---|
+| `services/api/compchem_ingest.py` | Manifest → DB persistence. Find-or-create Project/Campaign/Molecule, create Run + Inputs/Outputs + Metrics + AssayResults, run server-side QC, write hash-chain audit entries. RDKit-backed SMILES canonicalisation + InChIKey dedup; graceful degradation when RDKit absent. |
+| `services/api/compchem_routes.py` | Route handlers + Pydantic schemas (router prefix `/api/v1`, tag "Comp-Chem"). |
+| `services/api/test_compchem_routes.py` | 15-test end-to-end suite over SQLite via FastAPI `TestClient`. Includes tamper-detection test against the audit chain. |
+
+### Endpoints
+
+| Method | Path | Behaviour |
+|---|---|---|
+| `POST` | `/api/v1/campaigns` | Create campaign (and parent project if absent). 409 on duplicate within org+project. |
+| `GET` | `/api/v1/campaigns/{id}` | Detail with `run_count` and `molecule_count` (computed via `COUNT()` rather than denormalised). |
+| `POST` | `/api/v1/runs/ingest` | Accepts the edge agent's manifest. Persists run + metrics + assay results, reruns server-side QC, writes audit entries. Returns `{run_id, campaign_id, project_id, molecule_id, molecule_created, qc, metrics_count}`. |
+| `GET` | `/api/v1/campaigns/{id}/molecules` | List molecules in campaign with `top_metrics` per molecule. "Best" = `MIN(value)` (correct for docking/binding — lower-is-better). Optional `?metric_name=` filter. |
+| `GET` | `/api/v1/molecules/{id}` | Full detail: properties, all runs that touched the molecule (direct or via metric FK), all assay results. |
+| `GET` | `/api/v1/runs/{id}` | Detail with inputs, outputs, metrics, server QC, client QC (advisory), and the audit log entries scoped to this run. |
+| `GET` | `/api/v1/campaigns/{id}/export?format=csv\|parquet` | ML-ready flat join: one row per `(molecule, metric, run)` with molecule + run context columns. Parquet via pandas + pyarrow. |
+| `POST` | `/api/v1/audit/verify/{campaign_id}` | Recomputes the **org-wide** hash chain (chains must be sequential — campaign-scoped verification would leave gaps). Also reports how many events reference this campaign for coverage visibility. Returns `{valid, status, record_count, errors, campaign_event_count}`. |
+
+### Hash-Chain Robustness Fix (caught by the test suite)
+
+`compute_audit_hash` previously used `timestamp.isoformat()` directly, which made the chain fragile to driver-specific timestamp round-tripping (SQLite drops tzinfo from `DateTime(timezone=True)` on read; Postgres microsecond precision can vary). The fix in `compchem_models._canonical_timestamp`:
+- Normalise to UTC, strip tzinfo
+- Truncate microseconds → milliseconds
+- Emit with `isoformat(timespec="milliseconds")`
+
+This ensures the hash is computed from a stable string form regardless of dialect or driver. Verified by `test_verify_audit_chain_returns_pass` (chain valid after 8+ writes) and `test_verify_audit_chain_detects_tamper` (chain breaks correctly when one row's `actor` field is mutated post-write).
+
+### Schema-Reservation Fix (caught by `import compchem_models`)
+
+The original Layer 0 models declared `metadata = Column(JSONB, ...)` on every entity. SQLAlchemy reserves `metadata` on the declarative base, so models couldn't import. Fix: Python attribute renamed to `extra_metadata`, DB column name preserved via `Column("metadata", JSONB, ...)`. Migration 003 unchanged.
+
+### How Layer 1 → Layer 2 Connects
+
+The agent's `POST /api/v1/cc/events` placeholder is now `POST /api/v1/runs/ingest`. The manifest body shape (filename, s3_key, file_hash, parser_name, artifact_role, parsed.*, client_qc, plus campaign context fields merged in from `.lablink.yaml`) is exactly what `ingest_run_manifest()` consumes.
+
+### Dependencies
+
+`services/api/requirements.txt` already includes `cclib==1.8.1` and `rdkit==2024.3.5` from Layer 3. Parquet export uses the existing pandas; production container needs `pyarrow` for that path (gracefully 501s if missing).
+
+### Tests Across All Comp-Chem Layers
+
+- Layer 1 parsers + context: 5 tests in `parsers/compchem/test_compchem_parsers.py`
+- Layer 3 QC: 46 tests in `services/api/test_compchem_qc.py`
+- Layer 2 routes: 15 tests in `services/api/test_compchem_routes.py`
+
+**66/66 tests pass.** Run them all from the repo root:
+
+```bash
+python parsers/compchem/test_compchem_parsers.py     # 5/5
+cd services/api && python test_compchem_qc.py       # 46/46
+cd services/api && python test_compchem_routes.py   # 15/15
+```
+
+---
+
 ## What's Not Here Yet (Known Gaps)
 
 - **Authentication** — API key infra added (`auth.py`); set `AUTH_REQUIRED=true` in production; no OAuth2
@@ -590,6 +652,7 @@ Run with: `cd services/api && python test_compchem_qc.py`
 
 | Date | Change |
 |---|---|
+| 2026-05-22 | Comp-chem Layer 2: API surface (`compchem_routes.py` + `compchem_ingest.py`) — 8 endpoints (campaigns, runs/ingest, molecules, exports, audit verify), RDKit-backed SMILES canonicalisation, parquet/CSV export, 15-test E2E suite over SQLite; fixed Layer 0 `metadata` SQLAlchemy collision + hash-chain timestamp normalisation |
 | 2026-05-22 | Comp-chem Layer 3: chemistry-aware QC (`compchem_qc.py`) — MD stability, docking validity, DFT convergence, Lipinski/Veber + PAINS; 46 tests passing; wired into agent as `client_qc` |
 | 2026-05-22 | Comp-chem Layer 1: watcher agent (`edge/compchem_agent.py`), 7 parsers (GROMACS, OpenMM, Vina, Gnina, Glide, Gaussian, ORCA, RDKit tables), `.lablink.yaml` context resolver, smoke tests; SHA256 hashing + context-mandatory ingest |
 | 2026-05-22 | Comp-chem Layer 0: Project/Campaign/Run/Molecule/AssayResult data model + migration 003 |

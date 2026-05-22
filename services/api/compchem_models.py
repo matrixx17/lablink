@@ -167,7 +167,7 @@ class Project(Base):
     target_uniprot = Column(String(16), nullable=True) # e.g. "P00533"
     indication = Column(String(256), nullable=True)    # therapeutic area
     status = Column(String(32), nullable=False, default=ProjectStatus.ACTIVE.value)
-    metadata = Column(JSONB, nullable=True)            # arbitrary key/value
+    extra_metadata = Column("metadata", JSONB, nullable=True)            # arbitrary key/value
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
@@ -207,7 +207,7 @@ class Campaign(Base):
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
-    metadata = Column(JSONB, nullable=True)
+    extra_metadata = Column("metadata", JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
@@ -259,7 +259,7 @@ class Run(Base):
     wall_time_s = Column(Float, nullable=True)             # seconds, for cost tracking
 
     error_message = Column(Text, nullable=True)
-    metadata = Column(JSONB, nullable=True)
+    extra_metadata = Column("metadata", JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
@@ -290,7 +290,7 @@ class RunInput(Base):
     file_hash = Column(String(64), nullable=True)   # SHA256 of file contents
     file_size_bytes = Column(Integer, nullable=True)
     description = Column(Text, nullable=True)
-    metadata = Column(JSONB, nullable=True)
+    extra_metadata = Column("metadata", JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
@@ -315,7 +315,7 @@ class RunOutput(Base):
     file_hash = Column(String(64), nullable=True)
     file_size_bytes = Column(Integer, nullable=True)
     description = Column(Text, nullable=True)
-    metadata = Column(JSONB, nullable=True)
+    extra_metadata = Column("metadata", JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
@@ -349,7 +349,7 @@ class RunMetric(Base):
     unit = Column(String(32), nullable=False)           # e.g. "kcal/mol", "Å", "dimensionless"
     confidence = Column(Float, nullable=True)           # 0–1, model confidence or experimental uncertainty flag
     stderr = Column(Float, nullable=True)               # standard error for FEP results
-    metadata = Column(JSONB, nullable=True)             # pose rank, frame index, etc.
+    extra_metadata = Column("metadata", JSONB, nullable=True)             # pose rank, frame index, etc.
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
@@ -372,7 +372,7 @@ class RunLineage(Base):
     parent_run_id = Column(Integer, ForeignKey("cc_runs.id", ondelete="CASCADE"), nullable=False, index=True)
     child_run_id = Column(Integer, ForeignKey("cc_runs.id", ondelete="CASCADE"), nullable=False, index=True)
     relationship = Column(String(64), nullable=True)   # e.g. "pose_to_md", "md_to_fep"
-    metadata = Column(JSONB, nullable=True)
+    extra_metadata = Column("metadata", JSONB, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("parent_run_id", "child_run_id", name="uq_cc_lineage_parent_child"),
@@ -416,7 +416,7 @@ class Molecule(Base):
     molecular_weight = Column(Float, nullable=True)
     formula = Column(String(128), nullable=True)
 
-    metadata = Column(JSONB, nullable=True)
+    extra_metadata = Column("metadata", JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
@@ -452,7 +452,7 @@ class MoleculeProperty(Base):
     unit = Column(String(32), nullable=True)
     property_source = Column(String(128), nullable=True)   # "rdkit", "chemprop", "wet_lab", model name
     confidence = Column(Float, nullable=True)
-    metadata = Column(JSONB, nullable=True)
+    extra_metadata = Column("metadata", JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
@@ -537,6 +537,27 @@ class AuditEvent(Base):
 # Audit helpers (mirrors database.py pattern exactly)
 # ---------------------------------------------------------------------------
 
+def _canonical_timestamp(ts: datetime) -> str:
+    """
+    Canonical UTC string for audit hashing.
+
+    Reasons we don't just call isoformat():
+      - SQLite drops tzinfo on round-trip from DateTime(timezone=True), so a
+        round-tripped record would produce a different isoformat() than the
+        pre-insert value, breaking the chain.
+      - Different drivers vary in microsecond precision.
+
+    We normalise to UTC, strip tzinfo, and emit ISO with millisecond
+    precision — stable across all dialects.
+    """
+    if ts.tzinfo is not None:
+        ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
+    # Truncate to milliseconds to avoid driver-specific microsecond drift
+    ms = ts.microsecond // 1000 * 1000
+    ts = ts.replace(microsecond=ms)
+    return ts.isoformat(timespec="milliseconds")
+
+
 def compute_audit_hash(
     timestamp: datetime,
     org_id: str,
@@ -548,7 +569,7 @@ def compute_audit_hash(
     previous_hash: Optional[str],
 ) -> str:
     payload = {
-        "timestamp": timestamp.isoformat(),
+        "timestamp": _canonical_timestamp(timestamp),
         "org_id": org_id,
         "action": action,
         "entity_type": entity_type,
