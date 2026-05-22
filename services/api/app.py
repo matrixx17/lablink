@@ -1124,6 +1124,11 @@ def verify_audit(org_id: str = Query("default-org"), db: Session = Depends(get_d
     return AuditVerifyResponse(**result)
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 @app.get(
     "/healthz",
     tags=["System"],

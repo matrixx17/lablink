@@ -26,3 +26,4 @@ httptools==0.6.1
 # Comp-chem additions
 cclib==1.8.1        # DFT log parsing (Gaussian, ORCA, etc.) — used by parsers/compchem
 rdkit==2024.3.5      # SMILES canonicalisation, descriptors, PAINS filter, sanitization (Layer 3 QC)
+cryptography==45.0.3 # Encrypt hosted scoped credential payloads

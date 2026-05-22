@@ -33,6 +33,7 @@ from compchem_models import (
     AuditEvent,
     AuditEventAction,
     Campaign,
+    DockingGrid,
     Molecule,
     MoleculeProperty,
     Organization,
@@ -389,6 +390,16 @@ def ingest_run_manifest(
         )
 
     # --- Run -------------------------------------------------------------
+    grid_id = manifest.get("grid_id")
+    if grid_id:
+        grid = (
+            db.query(DockingGrid)
+            .filter(DockingGrid.id == str(grid_id), DockingGrid.campaign_id == campaign.id)
+            .first()
+        )
+        if not grid:
+            raise ValueError(f"grid_id={grid_id} not found for campaign_id={campaign.id}")
+
     run_kind_value = (parsed.get("run_kind") or RunKind.OTHER.value).lower()
     termination = (parsed.get("termination_status") or "unknown").lower()
 
@@ -409,10 +420,12 @@ def ingest_run_manifest(
         org_id=org_id,
         campaign_id=campaign.id,
         molecule_id=molecule.id if molecule else None,
+        grid_id=str(grid_id) if grid_id else None,
         external_run_id=manifest.get("external_run_id"),
         name=manifest.get("run_name") or parsed.get("source_file"),
         run_kind=run_kind_value,
         status=run_status,
+        was_inferred=bool(manifest.get("inferred_from_path")),
         software_name=parsed.get("software_name") or manifest.get("software_name"),
         software_version=parsed.get("software_version"),
         forcefield=parsed.get("forcefield") or manifest.get("forcefield"),
@@ -431,6 +444,8 @@ def ingest_run_manifest(
             "client_qc": manifest.get("client_qc"),
             "parser_name": manifest.get("parser_name"),
             "context_source": manifest.get("context_source"),
+            "inferred_from_path": bool(manifest.get("inferred_from_path")),
+            "inferred_context": manifest.get("inferred_context") or {},
             "parse_warnings": parsed.get("parse_warnings") or [],
             "run_metadata": manifest.get("run_metadata") or {},
         },

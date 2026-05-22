@@ -1,73 +1,192 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, AuditEvent, VerifyResult } from "../api/client";
+import { api, AuditEvent, Campaign, VerifyResult } from "../api/client";
 import { useOrgId, withOrg } from "../components/Layout";
-import { Card, EmptyState, ErrorBox, fmtDate, PageHeader, StatusBadge } from "../components/ui";
+import { Card, EmptyState, ErrorBox, fmtDate, PageHeader, Stat } from "../components/ui";
 import styles from "./pages.module.css";
+
+function humanize(value: string) {
+  return value.replace(/_/g, " ");
+}
+
+function eventDescription(event: AuditEvent) {
+  const details = event.details || {};
+  if (typeof details.message === "string") return details.message;
+  if (typeof details.description === "string") return details.description;
+  return `${humanize(event.action)} recorded for ${event.entity_type || "entity"} ${event.entity_id || ""}`.trim();
+}
+
+function eventBadgeClass(action: string) {
+  if (action === "cro_delivery") return styles.auditBadgePurple;
+  if (action === "run_complete") return styles.auditBadgeGreen;
+  if (action === "lead_nominated") return styles.auditBadgeGold;
+  if (action === "file_received") return styles.auditBadgeBlue;
+  if (action === "qc_flagged") return styles.auditBadgeRed;
+  return styles.auditBadgeNeutral;
+}
+
+function downloadJson(filename: string, data: unknown) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
 
 export default function AuditPage() {
   const { campaignId = "" } = useParams();
   const { orgId } = useOrgId();
+  const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [verify, setVerify] = useState<VerifyResult | null>(null);
+  const [verifiedAt, setVerifiedAt] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
-    api.audit(campaignId, orgId).then(setEvents).catch(setError);
+    Promise.all([
+      api.campaign(campaignId, orgId),
+      api.audit(campaignId, orgId),
+      api.verifyAudit(campaignId, orgId)
+    ])
+      .then(([campaignResponse, auditResponse, verifyResponse]) => {
+        setCampaign(campaignResponse);
+        setEvents(auditResponse);
+        setVerify(verifyResponse);
+        setVerifiedAt(new Date().toISOString());
+      })
+      .catch(setError);
   }, [campaignId, orgId]);
 
-  const verifyChain = () => {
-    api.verifyAudit(campaignId, orgId).then(setVerify).catch(setError);
+  const chronologicalEvents = useMemo(() => {
+    return events
+      .slice()
+      .sort((a, b) => {
+        const timeDiff = new Date(a.timestamp || 0).getTime() - new Date(b.timestamp || 0).getTime();
+        return timeDiff || a.id - b.id;
+      });
+  }, [events]);
+
+  const actors = useMemo(() => {
+    return Array.from(new Set(chronologicalEvents.map((event) => event.actor).filter(Boolean) as string[])).sort();
+  }, [chronologicalEvents]);
+
+  const firstEvent = chronologicalEvents[0];
+  const lastEvent = chronologicalEvents[chronologicalEvents.length - 1];
+  const integrityOk = verify?.valid === true;
+  const verificationText = verify
+    ? integrityOk
+      ? `Hash chain intact — ${verify.campaign_event_count ?? chronologicalEvents.length} events verified`
+      : `Hash chain compromised — ${verify.errors?.length || 1} issue${(verify.errors?.length || 1) === 1 ? "" : "s"} found`
+    : "Verifying hash chain...";
+
+  const exportJson = () => {
+    downloadJson(`campaign-${campaignId}-audit-trail.json`, {
+      campaign,
+      org_id: orgId,
+      exported_at: new Date().toISOString(),
+      verification: verify,
+      audit_events: chronologicalEvents
+    });
   };
 
   if (error) return <ErrorBox error={error} />;
+  if (!campaign && !verify && events.length === 0) return <EmptyState>Loading audit trail...</EmptyState>;
 
   return (
-    <div className={styles.grid}>
+    <div className={`${styles.grid} ${styles.auditReport}`}>
       <PageHeader
-        eyebrow="Hash-chain audit"
-        title={`Campaign ${campaignId} audit log`}
+        eyebrow={campaign?.name || `Campaign ${campaignId}`}
+        title="Audit Trail"
         actions={
-          <>
-            <button className={styles.button} onClick={verifyChain}>Verify integrity</button>
+          <div className={styles.auditActions}>
+            <span className={`${styles.auditIntegrityBadge} ${integrityOk ? styles.auditIntegrityPass : styles.auditIntegrityFail}`}>
+              {integrityOk ? "✓ Chain Integrity Verified" : "✗ Chain Compromised"}
+            </span>
+            <button className={styles.secondaryButton} onClick={() => window.print()}>Export PDF</button>
+            <button className={styles.button} onClick={exportJson}>Export JSON</button>
             <Link className={styles.secondaryButton} to={withOrg(`/campaigns/${campaignId}`, orgId)}>Back</Link>
-          </>
+          </div>
         }
       />
-      {verify ? (
-        <Card>
-          <StatusBadge status={verify.status} />
-          <p>{verify.valid ? "Audit chain verified." : "Audit chain failed verification."}</p>
-          <pre className={styles.json}>{JSON.stringify(verify, null, 2)}</pre>
-        </Card>
-      ) : null}
+
+      <div className={styles.stats}>
+        <Stat label="Total Events" value={chronologicalEvents.length} />
+        <div className={styles.statCard}>
+          <span>Actors</span>
+          <div className={styles.actorBadges}>
+            {actors.length ? actors.map((actor) => <i key={actor}>{actor}</i>) : <strong>-</strong>}
+          </div>
+        </div>
+        <Stat
+          label="Date Range"
+          value={firstEvent && lastEvent ? `${fmtDate(firstEvent.timestamp)} → ${fmtDate(lastEvent.timestamp)}` : "-"}
+        />
+        <Stat label="Verification Status" value={verificationText} />
+      </div>
+
       <Card>
+        <h2>Audit Log</h2>
         {events.length === 0 ? <EmptyState>No campaign audit events found.</EmptyState> : (
           <div className={styles.tableWrap}>
-            <table className={styles.table}>
+            <table className={`${styles.table} ${styles.auditTable}`}>
               <thead>
                 <tr>
-                  <th>Time</th>
-                  <th>Action</th>
-                  <th>Entity</th>
+                  <th>#</th>
+                  <th>Timestamp</th>
+                  <th>Event Type</th>
                   <th>Actor</th>
+                  <th>Description</th>
                   <th>Hash</th>
                 </tr>
               </thead>
               <tbody>
-                {events.map((event) => (
+                {chronologicalEvents.map((event, index) => (
                   <tr key={event.id}>
+                    <td>{index + 1}</td>
                     <td>{fmtDate(event.timestamp)}</td>
-                    <td>{event.action}</td>
-                    <td>{event.entity_type}:{event.entity_id}</td>
+                    <td>
+                      <span className={`${styles.auditEventBadge} ${eventBadgeClass(event.action)}`}>
+                        {humanize(event.action)}
+                      </span>
+                    </td>
                     <td>{event.actor || "-"}</td>
-                    <td><span className={styles.muted}>{event.record_hash?.slice(0, 24)}</span></td>
+                    <td>{eventDescription(event)}</td>
+                    <td><code className={styles.hashShort}>{event.record_hash?.slice(0, 8) || "-"}</code></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
+      </Card>
+
+      <Card className={styles.verificationCard}>
+        <h2>Verification</h2>
+        <p>
+          This audit trail uses SHA-256 hash chaining. Each event's hash is
+          computed from its content plus the previous event's hash, forming a
+          tamper-evident chain. Deleting or modifying any event breaks all
+          subsequent hashes.
+        </p>
+        <div className={styles.hashGrid}>
+          <div>
+            <span>First hash</span>
+            <code>{firstEvent?.record_hash || "-"}</code>
+          </div>
+          <div>
+            <span>Last hash</span>
+            <code>{lastEvent?.record_hash || "-"}</code>
+          </div>
+        </div>
+        <div className={`${styles.verificationResult} ${integrityOk ? styles.auditIntegrityPass : styles.auditIntegrityFail}`}>
+          <strong>{integrityOk ? "Verified" : "Failed"}</strong>
+          <span>{verificationText}</span>
+          <span>Checked at {fmtDate(verifiedAt)}</span>
+        </div>
       </Card>
     </div>
   );

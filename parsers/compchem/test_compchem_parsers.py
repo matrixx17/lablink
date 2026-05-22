@@ -22,7 +22,7 @@ from parsers.compchem import (  # noqa: E402
     RunKind,
     TerminationStatus,
 )
-from edge.campaign_context import CampaignContextResolver  # noqa: E402
+from edge.campaign_context import CampaignContextResolver, infer_from_path  # noqa: E402
 
 
 FIXTURES = os.path.join(REPO_ROOT, "tests", "fixtures", "compchem")
@@ -108,6 +108,45 @@ def test_no_context_returns_none():
         with open(stranger, "w") as f:
             f.write("placeholder\n")
         assert resolver.resolve(stranger) is None
+
+
+def test_path_inference_standard_path():
+    inferred = infer_from_path(
+        "/tmp/watch/campaigns/lead_opt_round_3/molecules/LL-042/vina/run_12/dock.log",
+        "/tmp/watch",
+    )
+    assert inferred.campaign_name == "lead_opt_round_3"
+    assert inferred.molecule_label == "LL-042"
+    assert inferred.run_type == "vina"
+    assert inferred.run_index == 12
+
+
+def test_path_inference_missing_campaign_component():
+    inferred = infer_from_path(
+        "/tmp/watch/molecules/LL-042/gromacs/run1/md.log",
+        "/tmp/watch",
+    )
+    assert inferred.campaign_name is None
+    assert inferred.molecule_label == "LL-042"
+    assert inferred.run_type == "gromacs"
+    assert inferred.run_index == 1
+
+
+def test_path_inference_ambiguous_run_type_uses_first_path_match():
+    inferred = infer_from_path(
+        "/tmp/watch/campaigns/round1/molecules/LL-042/gromacs/vina/run_2/out.log",
+        "/tmp/watch",
+    )
+    assert inferred.run_type == "gromacs"
+
+
+def test_path_inference_no_recognizable_components():
+    inferred = infer_from_path("/tmp/watch/random/output/file.dat", "/tmp/watch")
+    assert inferred.campaign_name is None
+    assert inferred.molecule_label is None
+    assert inferred.run_type is None
+    assert inferred.run_index is None
+    assert inferred.has_context is False
 
 
 def test_unknown_file_returns_stub_not_raise():

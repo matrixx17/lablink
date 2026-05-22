@@ -1,0 +1,20 @@
+# LabLink Campaign Configuration
+# Generated for: lead_opt_round_1
+# Hand this file to your CRO or drop it in your output directory.
+
+campaign_id: "1"
+org_token: "PASTE_YOUR_TOKEN_HERE"
+
+# The molecule being studied (SMILES string)
+# You can override this per-run using the --molecule CLI flag
+molecule_smiles: ""
+
+# Run type: one of md, docking, dft, property, other
+run_type: ""
+
+# Optional: associate with a specific docking grid
+# grid_id: ""
+
+# Optional: override software detection
+# software_name: ""
+# software_version: ""
