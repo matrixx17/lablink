@@ -38,6 +38,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import resolve_auth, require_org_access, verify_api_key
+from compchem_bco import build_bco
 from compchem_ingest import ingest_run_manifest
 from demo_seed import (
     DEMO_ADMIN_EMAIL,
@@ -1882,6 +1883,38 @@ def list_campaign_audit_events(
         }
         for a in rows
     ]
+
+
+@router.get("/api/v1/campaigns/{campaign_id}/export/bco")
+def export_campaign_bco(
+    campaign_id: int,
+    download: bool = Query(False, description="If true, send as attachment"),
+    org_id: str = Query("default-org"),
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    """
+    Export the campaign as an IEEE 2791-2020 BioCompute Object.
+
+    The etag is SHA-256 of the canonical JSON of the document with the etag
+    field zeroed; recompute on verify by zeroing etag and re-hashing.
+    """
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
+    campaign, project = _load_campaign(db, campaign_id, org_id)
+
+    bco = build_bco(db, campaign, project)
+    headers: Dict[str, str] = {}
+    if download:
+        safe_name = "".join(
+            c if c.isalnum() or c in ("-", "_") else "_" for c in campaign.name
+        )
+        headers["Content-Disposition"] = f'attachment; filename="{safe_name}_BCO.json"'
+    return Response(
+        content=json.dumps(bco, indent=2, default=str),
+        media_type="application/json",
+        headers=headers,
+    )
 
 
 @router.post("/api/v1/audit/verify/{campaign_id}")

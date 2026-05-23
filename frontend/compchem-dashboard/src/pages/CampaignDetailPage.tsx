@@ -179,6 +179,13 @@ export default function CampaignDetailPage() {
             <a className={styles.button} href={`/api/v1/campaigns/${id}/export?org_id=${encodeURIComponent(orgId)}&format=csv`}>
               Export CSV
             </a>
+            <a
+              className={styles.secondaryButton}
+              href={`/api/v1/campaigns/${id}/export/bco?org_id=${encodeURIComponent(orgId)}&download=true`}
+              title="IEEE 2791-2020 BioCompute Object"
+            >
+              Export BCO
+            </a>
           </>
         }
       />

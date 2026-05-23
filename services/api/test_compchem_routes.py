@@ -592,6 +592,67 @@ def test_revoke_cro_upload_credential_hides_from_active_list():
 
 # --- Cross-org isolation --------------------------------------------------
 
+def test_export_bco_has_required_domains_and_valid_etag():
+    """
+    Validate the IEEE 2791-2020 BCO export:
+      - HTTP 200 + application/json
+      - all 10 required top-level fields present
+      - etag matches SHA-256 of the body with etag zeroed
+      - download=true sets Content-Disposition
+    """
+    import hashlib
+    import json as _json
+
+    r = client.get(
+        f"/api/v1/campaigns/{_CAMPAIGN_ID}/export/bco",
+        params={"org_id": ORG},
+    )
+    assert r.status_code == 200, r.text
+    assert "application/json" in r.headers.get("content-type", "")
+    bco = r.json()
+
+    required = {
+        "object_id", "spec_version", "etag",
+        "provenance_domain", "usability_domain", "description_domain",
+        "execution_domain", "io_domain", "parametric_domain", "error_domain",
+    }
+    missing = required - set(bco.keys())
+    assert not missing, f"BCO missing required fields: {missing}"
+
+    # Spot-check spec_version and object_id shape
+    assert bco["spec_version"] == "https://w3id.org/ieee/ieee-2791-schema/"
+    assert bco["object_id"] == f"lablink/{_CAMPAIGN_ID}/bco/v1"
+
+    # Provenance has the expected sub-fields
+    prov = bco["provenance_domain"]
+    for key in ("name", "version", "created", "modified", "contributors",
+                "license", "embargo", "review"):
+        assert key in prov, f"provenance_domain missing {key}"
+    assert prov["license"] == "restricted"
+
+    # Recompute etag exactly as the server does: zero the field, canonical JSON
+    etag_received = bco["etag"]
+    body_for_hash = dict(bco)
+    body_for_hash["etag"] = ""
+    canonical = _json.dumps(body_for_hash, sort_keys=True, separators=(",", ":"), default=str)
+    expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    assert etag_received == expected, (
+        f"etag mismatch: got {etag_received!r}, expected {expected!r}"
+    )
+
+    # error_domain is the two empty buckets we specified
+    assert bco["error_domain"] == {"empirical_error": {}, "algorithmic_error": {}}
+
+    # download=true should set Content-Disposition
+    r2 = client.get(
+        f"/api/v1/campaigns/{_CAMPAIGN_ID}/export/bco",
+        params={"org_id": ORG, "download": "true"},
+    )
+    assert r2.status_code == 200
+    cd = r2.headers.get("content-disposition", "")
+    assert "attachment" in cd and "BCO.json" in cd
+
+
 def test_other_org_cannot_see_campaign():
     r = client.get(
         f"/api/v1/campaigns/{_CAMPAIGN_ID}",
@@ -639,6 +700,7 @@ def _run_all():
         test_export_campaign_unknown_format_400,
         test_verify_audit_chain_returns_pass,
         test_verify_audit_chain_detects_tamper,
+        test_export_bco_has_required_domains_and_valid_etag,
         test_revoke_cro_upload_credential_hides_from_active_list,
         test_other_org_cannot_see_campaign,
     ]
