@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { api, AuditEvent, Campaign, VerifyResult } from "../api/client";
 import { useOrgId, withOrg } from "../components/Layout";
-import { Card, EmptyState, ErrorBox, fmtDate, PageHeader, Stat } from "../components/ui";
+import { ActionBar, Card, DataTable, EmptyState, ErrorBox, fmtDate, HeroHeader, KpiStrip, PrimaryButton, SecondaryButton, SectionRule } from "../components/ui";
 import styles from "./pages.module.css";
 
 function humanize(value: string) {
@@ -97,75 +97,70 @@ export default function AuditPage() {
   if (!campaign && !verify && events.length === 0) return <EmptyState>Loading audit trail...</EmptyState>;
 
   return (
-    <div className={`${styles.grid} ${styles.auditReport}`}>
-      <PageHeader
+    <div className={`${styles.grid} ${styles.reveal} ${styles.auditReport}`}>
+      <HeroHeader
         eyebrow={campaign?.name || `Campaign ${campaignId}`}
-        title="Audit Trail"
+        title="Audit trail"
+        context={<p>Tamper-evident delivery and computation record suitable for regulatory review.</p>}
+        status={
+          <span className={`${styles.auditIntegrityBadge} ${integrityOk ? styles.auditIntegrityPass : styles.auditIntegrityFail}`}>
+            {integrityOk ? "✓ Chain integrity verified" : "✗ Chain compromised"}
+          </span>
+        }
         actions={
-          <div className={styles.auditActions}>
-            <span className={`${styles.auditIntegrityBadge} ${integrityOk ? styles.auditIntegrityPass : styles.auditIntegrityFail}`}>
-              {integrityOk ? "✓ Chain Integrity Verified" : "✗ Chain Compromised"}
-            </span>
-            <button className={styles.secondaryButton} onClick={() => window.print()}>Export PDF</button>
-            <button className={styles.button} onClick={exportJson}>Export JSON</button>
-            <Link className={styles.secondaryButton} to={withOrg(`/campaigns/${campaignId}`, orgId)}>Back</Link>
-          </div>
+          <ActionBar>
+            <SecondaryButton onClick={() => window.print()}>Export PDF</SecondaryButton>
+            <PrimaryButton onClick={exportJson}>Export JSON</PrimaryButton>
+            <SecondaryButton as="a" href={withOrg(`/campaigns/${campaignId}`, orgId)}>Back</SecondaryButton>
+          </ActionBar>
         }
       />
 
-      <div className={styles.stats}>
-        <Stat label="Total Events" value={chronologicalEvents.length} />
-        <div className={styles.statCard}>
-          <span>Actors</span>
-          <div className={styles.actorBadges}>
-            {actors.length ? actors.map((actor) => <i key={actor}>{actor}</i>) : <strong>-</strong>}
-          </div>
-        </div>
-        <Stat
-          label="Date Range"
-          value={firstEvent && lastEvent ? `${fmtDate(firstEvent.timestamp)} → ${fmtDate(lastEvent.timestamp)}` : "-"}
-        />
-        <Stat label="Verification Status" value={verificationText} />
-      </div>
+      <KpiStrip
+        items={[
+          { label: "Total events", value: chronologicalEvents.length },
+          { label: "Date range", value: firstEvent && lastEvent ? `${fmtDate(firstEvent.timestamp)} → ${fmtDate(lastEvent.timestamp)}` : "—" },
+          { label: "Verification", value: verificationText, tone: integrityOk ? "good" : "bad" },
+          { label: "Unique actors", value: actors.length || "—" },
+        ]}
+      />
 
       <Card>
-        <h2>Audit Log</h2>
+        <SectionRule title="Audit log" />
         {events.length === 0 ? <EmptyState>No campaign audit events found.</EmptyState> : (
-          <div className={styles.tableWrap}>
-            <table className={`${styles.table} ${styles.auditTable}`}>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Timestamp</th>
-                  <th>Event Type</th>
-                  <th>Actor</th>
-                  <th>Description</th>
-                  <th>Hash</th>
+          <DataTable>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Timestamp</th>
+                <th>Event type</th>
+                <th>Actor</th>
+                <th>Description</th>
+                <th>Hash</th>
+              </tr>
+            </thead>
+            <tbody>
+              {chronologicalEvents.map((event, index) => (
+                <tr key={event.id}>
+                  <td>{index + 1}</td>
+                  <td>{fmtDate(event.timestamp)}</td>
+                  <td>
+                    <span className={`${styles.auditEventBadge} ${eventBadgeClass(event.action)}`}>
+                      {humanize(event.action)}
+                    </span>
+                  </td>
+                  <td>{event.actor || "—"}</td>
+                  <td>{eventDescription(event)}</td>
+                  <td><code className={styles.hashShort}>{event.record_hash?.slice(0, 8) || "—"}</code></td>
                 </tr>
-              </thead>
-              <tbody>
-                {chronologicalEvents.map((event, index) => (
-                  <tr key={event.id}>
-                    <td>{index + 1}</td>
-                    <td>{fmtDate(event.timestamp)}</td>
-                    <td>
-                      <span className={`${styles.auditEventBadge} ${eventBadgeClass(event.action)}`}>
-                        {humanize(event.action)}
-                      </span>
-                    </td>
-                    <td>{event.actor || "-"}</td>
-                    <td>{eventDescription(event)}</td>
-                    <td><code className={styles.hashShort}>{event.record_hash?.slice(0, 8) || "-"}</code></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </DataTable>
         )}
       </Card>
 
       <Card className={styles.verificationCard}>
-        <h2>Verification</h2>
+        <SectionRule title="Verification" />
         <p>
           This audit trail uses SHA-256 hash chaining. Each event's hash is
           computed from its content plus the previous event's hash, forming a

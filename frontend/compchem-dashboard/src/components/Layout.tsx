@@ -5,10 +5,10 @@ import styles from "./Layout.module.css";
 
 export function useOrgId() {
   const [params, setParams] = useSearchParams();
-  const orgId = params.get("org") || "default-org";
+  const orgId = params.get("org") || "demo-therapeutics";
   const setOrgId = (next: string) => {
     const copy = new URLSearchParams(params);
-    copy.set("org", next || "default-org");
+    copy.set("org", next || "demo-therapeutics");
     setParams(copy, { replace: true });
   };
   return { orgId, setOrgId };
@@ -38,10 +38,10 @@ export default function Layout() {
     <div className={styles.shell}>
       <aside className={styles.sidebar}>
         <Link to={withOrg("/campaigns", orgId)} className={styles.brand}>
-          <span className={styles.mark}>LL</span>
+          <span className={styles.mark} aria-hidden />
           <div>
             <strong>LabLink</strong>
-            <span>Comp-Chem</span>
+            <span>Comp-Chem Console</span>
           </div>
         </Link>
         <nav className={styles.nav}>

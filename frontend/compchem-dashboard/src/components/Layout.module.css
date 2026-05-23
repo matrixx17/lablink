@@ -1,102 +1,150 @@
+/* Editorial shell — light sidebar, molecule glyph mark */
+
 .shell {
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: 220px 1fr;
   min-height: 100vh;
 }
 
 .sidebar {
-  background: #0f172a;
-  color: #e2e8f0;
-  padding: 24px;
+  background:
+    linear-gradient(180deg, rgba(29, 78, 216, 0.04) 0%, transparent 28%),
+    var(--bg-elev);
+  border-right: 1px solid var(--rule);
+  padding: 28px 20px 24px;
   display: flex;
   flex-direction: column;
   gap: 28px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
 
 .brand {
-  display: flex;
+  display: grid;
+  grid-template-columns: 38px 1fr;
   gap: 12px;
   align-items: center;
+  text-decoration: none !important;
+}
+
+.brand strong {
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  display: block;
+  line-height: 1.1;
 }
 
 .brand span {
   display: block;
-  color: #94a3b8;
-  font-size: 13px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin-top: 3px;
 }
 
+/* Hexagonal molecule glyph — pure CSS */
 .mark {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(135deg, #38bdf8, #6366f1);
-  color: #fff !important;
-  font-weight: 800;
-  letter-spacing: -0.04em;
+  width: 38px;
+  height: 38px;
+  position: relative;
+  background: var(--amber-dim);
+  clip-path: polygon(50% 0%, 95% 25%, 95% 75%, 50% 100%, 5% 75%, 5% 25%);
+}
+.mark::before {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border: 1.5px solid var(--amber);
+  clip-path: polygon(50% 0%, 95% 25%, 95% 75%, 50% 100%, 5% 75%, 5% 25%);
+}
+.mark::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--amber);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
 }
 
 .nav {
   display: grid;
-  gap: 8px;
+  gap: 2px;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  padding: 14px 0;
+  margin: 0 -4px;
 }
 
 .nav a {
-  color: #cbd5e1;
-  border-radius: 10px;
-  padding: 10px 12px;
+  color: var(--ink-2);
+  padding: 9px 12px;
+  font-family: var(--display);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  border-left: 2px solid transparent;
 }
 
-.nav a:hover,
+.nav a:hover {
+  color: var(--ink);
+  background: var(--amber-dim);
+}
+
 .nav a[aria-current="page"] {
-  background: #1e293b;
-  color: #fff;
+  color: var(--amber);
+  border-left-color: var(--amber);
+  background: var(--amber-dim);
 }
 
 .orgBox {
   margin-top: auto;
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
 }
 
 .orgBox label {
-  color: #94a3b8;
-  font-size: 12px;
+  font-family: var(--mono);
+  font-size: 10.5px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
 }
 
 .orgBox input {
   width: 100%;
-  border: 1px solid #334155;
-  border-radius: 10px;
-  padding: 10px 12px;
-  background: #020617;
-  color: #e2e8f0;
 }
 
 .main {
-  padding: 28px;
+  padding: 28px 32px 48px;
   overflow: auto;
+  max-width: calc(var(--max) + 64px);
 }
 
 .demoBanner {
   border: 1px solid #f59e0b;
   background: #fffbeb;
   color: #92400e;
-  border-radius: 14px;
+  border-radius: 3px;
   padding: 12px 14px;
   margin-bottom: 18px;
+  font-family: var(--mono);
+  font-size: 12.5px;
 }
 
-.demoBanner strong {
-  color: #78350f;
-}
-
-.demoBanner span {
-  color: #b45309;
-}
+.demoBanner strong { color: #78350f; }
+.demoBanner span { color: #b45309; }
 
 .demoGuide {
   position: fixed;
@@ -111,14 +159,15 @@
 
 .demoGuideToggle {
   width: 100%;
-  border: 1px solid #dbeafe;
-  background: #ffffff;
-  color: #0f172a;
-  border-radius: 999px;
+  border: 1px solid var(--rule-2);
+  background: var(--bg-elev);
+  color: var(--ink);
+  border-radius: 3px;
   padding: 10px 12px;
-  box-shadow: 0 14px 35px rgba(15, 23, 42, 0.16);
+  box-shadow: 0 14px 35px rgba(28, 25, 23, 0.12);
   cursor: pointer;
-  font-weight: 800;
+  font-family: var(--display);
+  font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -126,23 +175,25 @@
 }
 
 .demoGuideToggle span {
-  color: #2563eb;
-  font-size: 12px;
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 11px;
 }
 
 .demoGuidePanel {
   width: 280px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--rule-2);
+  border-radius: 3px;
   padding: 14px;
-  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.18);
+  box-shadow: 0 18px 45px rgba(28, 25, 23, 0.14);
 }
 
 .demoGuidePanel > strong {
   display: block;
   margin-bottom: 10px;
-  color: #0f172a;
+  color: var(--ink);
+  font-family: var(--display);
 }
 
 .demoGuideList {
@@ -154,58 +205,42 @@
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 8px;
-  color: #334155;
+  color: var(--ink-2);
   font-size: 13px;
   line-height: 1.35;
-  border-radius: 10px;
+  border-radius: 3px;
   padding: 7px;
 }
 
 .demoGuideList a:hover {
-  background: #f8fafc;
-  color: #0f172a;
+  background: var(--amber-dim);
+  color: var(--ink);
 }
 
 .demoGuideList span {
-  color: #2563eb;
+  color: var(--amber);
 }
 
 @media (max-width: 860px) {
-  .shell {
-    grid-template-columns: 1fr;
-  }
-
+  .shell { grid-template-columns: 1fr; }
   .sidebar {
     position: sticky;
     top: 0;
     z-index: 2;
+    height: auto;
   }
-
   .demoGuide {
     right: 14px;
     bottom: 14px;
     width: min(280px, calc(100vw - 28px));
   }
-
   .demoGuidePanel {
     width: min(280px, calc(100vw - 28px));
   }
 }
 
 @media print {
-  .shell {
-    display: block;
-    min-height: auto;
-  }
-
-  .sidebar,
-  .demoBanner,
-  .demoGuide {
-    display: none !important;
-  }
-
-  .main {
-    padding: 0;
-    overflow: visible;
-  }
+  .shell { display: block; min-height: auto; }
+  .sidebar, .demoBanner, .demoGuide { display: none !important; }
+  .main { padding: 0; overflow: visible; max-width: none; }
 }

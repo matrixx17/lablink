@@ -2,7 +2,22 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, AuditEvent, Campaign, CampaignRun, MoleculeListItem, MoleculeDetail } from "../api/client";
 import { useOrgId, withOrg } from "../components/Layout";
-import { Card, EmptyState, ErrorBox, fmtDate, fmtNumber, PageHeader, Stat, StatusBadge } from "../components/ui";
+import {
+  ActionBar,
+  Card,
+  DataTable,
+  EmptyState,
+  ErrorBox,
+  fmtDate,
+  fmtNumber,
+  HeroHeader,
+  KpiStrip,
+  PrimaryButton,
+  SecondaryButton,
+  SectionRule,
+  StatusBadge,
+} from "../components/ui";
+import { downloadBcoExport } from "../lib/bcoExport";
 import styles from "./pages.module.css";
 
 const statusClass: Record<string, string> = {
@@ -77,6 +92,7 @@ export default function CampaignDetailPage() {
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [lead, setLead] = useState<MoleculeDetail | null>(null);
   const [status, setStatus] = useState("");
+  const [exportingBco, setExportingBco] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
@@ -113,8 +129,19 @@ export default function CampaignDetailPage() {
   }, [runs]);
 
   const passRate = useMemo(() => qcPassRate(runs), [runs]);
-  const passRateClass =
-    passRate === null ? styles.statNeutral : passRate > 80 ? styles.statGood : passRate >= 60 ? styles.statWarn : styles.statBad;
+  const passRateTone =
+    passRate === null ? "neutral" : passRate > 80 ? "good" : passRate >= 60 ? "warn" : "bad";
+
+  const exportBco = async () => {
+    setExportingBco(true);
+    try {
+      await downloadBcoExport(id, orgId);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setExportingBco(false);
+    }
+  };
 
   const delivery = campaign?.metadata || {};
   const deliveryExtra = (delivery.extra_params || {}) as Record<string, unknown>;
@@ -167,71 +194,71 @@ export default function CampaignDetailPage() {
   if (!campaign) return <EmptyState>Loading campaign...</EmptyState>;
 
   return (
-    <div className={styles.grid}>
-      <PageHeader
+    <div className={`${styles.grid} ${styles.reveal}`}>
+      <HeroHeader
         eyebrow={campaign.project_name}
-        title="Campaign overview"
-        actions={
+        title={campaign.name}
+        context={
           <>
-            <Link className={styles.secondaryButton} to={withOrg(`/campaigns/${id}/molecules`, orgId)}>SAR scatter</Link>
-            <Link className={styles.secondaryButton} to={withOrg(`/campaigns/${id}/methods-export`, orgId)}>Methods</Link>
-            <Link className={styles.secondaryButton} to={withOrg(`/campaigns/${id}/audit`, orgId)}>🛡 Audit Trail</Link>
-            <a className={styles.button} href={`/api/v1/campaigns/${id}/export?org_id=${encodeURIComponent(orgId)}&format=csv`}>
-              Export CSV
-            </a>
-            <a
-              className={styles.secondaryButton}
-              href={`/api/v1/campaigns/${id}/export/bco?org_id=${encodeURIComponent(orgId)}&download=true`}
-              title="IEEE 2791-2020 BioCompute Object"
-            >
-              Export BCO
-            </a>
+            <p className={styles.heroTarget}>{campaign.target_name || campaign.project_name}</p>
+            {campaign.description ? <p className={styles.heroDescription}>{campaign.description}</p> : null}
+            {deliveredBy && deliveryDate ? (
+              <div className={styles.deliveryInfo}>
+                Delivered by <strong>{deliveredBy}</strong> on <strong>{dateOnly(deliveryDate)}</strong>
+              </div>
+            ) : null}
           </>
         }
+        status={
+          <span className={`${styles.campaignStatusPill} ${statusClass[campaign.status] || styles.statusComplete}`}>
+            {humanize(campaign.status)}
+          </span>
+        }
+        actions={
+          <ActionBar>
+            <SecondaryButton as="a" href={withOrg(`/campaigns/${id}/sar`, orgId)}>SAR explorer</SecondaryButton>
+            <SecondaryButton as="a" href={withOrg(`/campaigns/${id}/methods-export`, orgId)}>Methods</SecondaryButton>
+            <SecondaryButton as="a" href={withOrg(`/campaigns/${id}/audit`, orgId)}>Audit trail</SecondaryButton>
+            <PrimaryButton as="a" href={`/api/v1/campaigns/${id}/export?org_id=${encodeURIComponent(orgId)}&format=csv`}>
+              Export CSV
+            </PrimaryButton>
+            <SecondaryButton onClick={exportBco} disabled={exportingBco} loading={exportingBco}>
+              Export BCO
+            </SecondaryButton>
+          </ActionBar>
+        }
       />
-      <Card className={styles.campaignHero}>
-        <div className={styles.heroCopy}>
-          <div className={styles.heroTitleRow}>
-            <h1>{campaign.name}</h1>
-            <span className={`${styles.campaignStatusPill} ${statusClass[campaign.status] || styles.statusComplete}`}>
-              {humanize(campaign.status)}
-            </span>
-          </div>
-          <p className={styles.heroTarget}>{campaign.target_name || campaign.project_name}</p>
-          {campaign.description ? <p className={styles.heroDescription}>{campaign.description}</p> : null}
-          {deliveredBy && deliveryDate ? (
-            <div className={styles.deliveryInfo}>
-              Delivered by <strong>{deliveredBy}</strong> on <strong>{dateOnly(deliveryDate)}</strong> via LabLink secure upload
-            </div>
-          ) : null}
-        </div>
-        {lead ? (
-          <Link className={styles.leadCard} to={withOrg(`/molecules/${lead.id}`, orgId)}>
-            <span className={styles.leadEyebrow}>Lead Candidate</span>
-            <img src={api.moleculeSvgUrl(lead.id, orgId)} alt={`Structure for ${lead.name || lead.external_id || "lead molecule"}`} />
-            <strong>{lead.name || lead.external_id || `Molecule ${lead.id}`}</strong>
-            <span>{lead.external_id || "selected lead"}</span>
-            <div className={styles.leadScore}>
-              <span>Top docking score</span>
-              <strong>{leadDockingScore}</strong>
-            </div>
-          </Link>
-        ) : null}
-      </Card>
 
-      <div className={styles.stats}>
-        <Stat label="Total Compounds" value={campaign.molecule_count} />
-        <Stat label="Total Runs" value={campaign.run_count} />
-        <div className={`${styles.statCard} ${passRateClass}`}>
-          <span>QC Pass Rate</span>
-          <strong>{passRate === null ? "-" : `${passRate}%`}</strong>
-        </div>
-        <Stat label="Campaign Duration" value={daysBetween(runs)} />
-      </div>
+      {lead ? (
+        <Link className={styles.leadCard} to={withOrg(`/molecules/${lead.id}`, orgId)}>
+          <span className={styles.leadEyebrow}>Lead candidate</span>
+          <img src={api.moleculeSvgUrl(lead.id, orgId)} alt={`Structure for ${lead.name || lead.external_id || "lead molecule"}`} />
+          <strong>{lead.name || lead.external_id || `Molecule ${lead.id}`}</strong>
+          <span>{lead.external_id || "selected lead"}</span>
+          <div className={styles.leadScore}>
+            <span>Top docking score</span>
+            <strong>{leadDockingScore}</strong>
+          </div>
+        </Link>
+      ) : null}
+
+      <KpiStrip
+        items={[
+          { label: "Total compounds", value: campaign.molecule_count },
+          { label: "Total runs", value: campaign.run_count },
+          {
+            label: "QC pass rate",
+            value: passRate === null ? "—" : passRate,
+            unit: passRate === null ? undefined : "%",
+            tone: passRateTone as "neutral" | "good" | "warn" | "bad",
+          },
+          { label: "Campaign duration", value: daysBetween(runs) },
+        ]}
+      />
 
       <div className={styles.twoCol}>
         <Card>
-          <h2>Timeline</h2>
+          <SectionRule eyebrow="Provenance" title="Timeline" />
           {timeline.items.length === 0 ? <EmptyState>No major audit events yet.</EmptyState> : (
             <div className={styles.timeline}>
               {timeline.items.map((event) => (
@@ -257,7 +284,7 @@ export default function CampaignDetailPage() {
         </Card>
 
         <Card>
-          <h2>Phase breakdown</h2>
+          <SectionRule eyebrow="Delivery phases" title="Phase breakdown" />
           <div className={styles.phaseGrid}>
             {phases.map((phase) => (
               <div className={styles.phaseCard} key={phase.title}>
@@ -272,16 +299,18 @@ export default function CampaignDetailPage() {
       </div>
 
       <Card>
-        <h2>Runs</h2>
-        <div className={styles.toolbar}>
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">All statuses</option>
-            {Object.keys(statusCounts).map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </div>
+        <SectionRule
+          eyebrow="Runs"
+          title="Computational jobs"
+          actions={
+            <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
+              <option value="">All statuses</option>
+              {Object.keys(statusCounts).map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          }
+        />
         {filteredRuns.length === 0 ? <EmptyState>No runs yet.</EmptyState> : (
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
+          <DataTable>
               <thead>
                 <tr>
                   <th>Run</th>
@@ -313,16 +342,15 @@ export default function CampaignDetailPage() {
                     <td>{fmtDate(run.completed_at)}</td>
                   </tr>
                 ))}
-              </tbody>
-            </table>
-          </div>
+            </tbody>
+          </DataTable>
         )}
       </Card>
+
       <Card>
-        <h2>Molecules</h2>
+        <SectionRule eyebrow="Compounds" title="Molecules in campaign" />
         {molecules.length === 0 ? <EmptyState>No molecules recorded.</EmptyState> : (
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
+          <DataTable>
               <thead>
                 <tr>
                   <th>Molecule</th>
@@ -347,9 +375,8 @@ export default function CampaignDetailPage() {
                     <td>{molecule.top_metrics.slice(0, 2).map((metric) => `${metric.metric_name}: ${fmtNumber(metric.best_value)} ${metric.unit}`).join(", ") || "-"}</td>
                   </tr>
                 ))}
-              </tbody>
-            </table>
-          </div>
+            </tbody>
+          </DataTable>
         )}
       </Card>
     </div>

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { api, MethodsExport } from "../api/client";
 import { useOrgId, withOrg } from "../components/Layout";
-import { Card, EmptyState, ErrorBox, fmtDate, PageHeader } from "../components/ui";
+import { Card, EmptyState, ErrorBox, fmtDate, HeroHeader, PrimaryButton, SecondaryButton, SectionRule } from "../components/ui";
 import styles from "./pages.module.css";
 
 function safeFilename(value: string) {
@@ -60,29 +60,28 @@ export default function MethodsExportPage() {
   const softwareRows = Object.entries(methods.software_versions || {});
 
   return (
-    <div className={styles.grid}>
-      <PageHeader
+    <div className={`${styles.grid} ${styles.reveal}`}>
+      <HeroHeader
         eyebrow={methods.campaign_name}
-        title="Auto-Generated Methods Section"
-        actions={<Link className={styles.secondaryButton} to={withOrg(`/campaigns/${id}`, orgId)}>Back to campaign</Link>}
+        title="Auto-generated methods section"
+        context={<p className={styles.methodsSubtitle}>Ready to paste into your manuscript or IND filing</p>}
+        actions={<SecondaryButton as="a" href={withOrg(`/campaigns/${id}`, orgId)}>Back to campaign</SecondaryButton>}
       />
-      <p className={styles.methodsSubtitle}>Ready to paste into your manuscript or IND filing</p>
 
       <Card className={styles.methodsEditorCard}>
         <div className={styles.methodsActions}>
-          <button type="button" className={styles.button} onClick={copyText}>
+          <PrimaryButton onClick={copyText}>
             {copied ? "Copied!" : "Copy to clipboard"}
-          </button>
-          <button type="button" className={styles.secondaryButton} onClick={() => downloadText(filename, text)}>
+          </PrimaryButton>
+          <SecondaryButton onClick={() => downloadText(filename, text)}>
             Download .txt
-          </button>
-          <button
-            type="button"
-            className={`${styles.secondaryButton} ${isEditing ? styles.toggleActive : ""}`}
+          </SecondaryButton>
+          <SecondaryButton
             onClick={() => setIsEditing((current) => !current)}
+            disabled={false}
           >
             {isEditing ? "Done editing" : "Edit"}
-          </button>
+          </SecondaryButton>
         </div>
         <textarea
           className={`${styles.methodsTextarea} ${isEditing ? styles.methodsTextareaEditing : ""}`}
@@ -106,7 +105,7 @@ export default function MethodsExportPage() {
       ) : null}
 
       <Card>
-        <h2>Software Versions Used</h2>
+        <SectionRule title="Software versions used" />
         {softwareRows.length === 0 ? <EmptyState>No software versions recorded.</EmptyState> : (
           <div className={styles.tableWrap}>
             <table className={styles.table}>
