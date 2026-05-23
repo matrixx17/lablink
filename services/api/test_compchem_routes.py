@@ -653,6 +653,76 @@ def test_export_bco_has_required_domains_and_valid_etag():
     assert "attachment" in cd and "BCO.json" in cd
 
 
+def test_export_evidence_book_zip_contents_and_checksums():
+    """
+    Validate the Evidence Book ZIP export:
+      - HTTP 200, application/zip, attachment filename
+      - contains every required member (PDF, CSVs, BCO, verification.json)
+      - every file_checksums entry in verification.json matches a fresh
+        SHA-256 of that zip member
+      - audit_log.csv hash inside the PDF matches the recomputed hash
+      - audit_chain_status is "verified"
+    """
+    import hashlib
+    import io as _io
+    import json as _json
+    import zipfile as _zip
+
+    r = client.get(
+        f"/api/v1/campaigns/{_CAMPAIGN_ID}/export/evidence-book",
+        params={"org_id": ORG},
+    )
+    assert r.status_code == 200, r.text
+    assert "application/zip" in r.headers.get("content-type", "")
+    cd = r.headers.get("content-disposition", "")
+    assert "attachment" in cd and "EvidenceBook_" in cd and cd.endswith('.zip"')
+    assert r.headers.get("x-evidence-book-sha256")
+
+    zf = _zip.ZipFile(_io.BytesIO(r.content))
+    names = set(zf.namelist())
+
+    required = {
+        "summary.pdf",
+        "runs.csv",
+        "molecules.csv",
+        "metrics.csv",
+        "audit_log.csv",
+        "campaign_bco.json",
+        "verification.json",
+    }
+    missing = required - names
+    assert not missing, f"Evidence book missing files: {missing}; got {names}"
+
+    verification = _json.loads(zf.read("verification.json"))
+    assert verification["schema"] == "lablink.evidence-book.verification/v1"
+    assert verification["campaign_id"] == _CAMPAIGN_ID
+    assert verification["audit_chain_status"] == "verified", verification
+
+    # Recompute every checksum and compare
+    for name, entry in verification["file_checksums"].items():
+        assert name in names, f"verification.json references missing {name}"
+        recomputed = hashlib.sha256(zf.read(name)).hexdigest()
+        assert recomputed == entry["sha256"], (
+            f"checksum mismatch for {name}: "
+            f"recomputed={recomputed}, claimed={entry['sha256']}"
+        )
+
+    # verification.json should NOT list itself in file_checksums
+    assert "verification.json" not in verification["file_checksums"]
+
+    # The PDF must mention the audit_log.csv SHA-256 (PDF stores text as
+    # latin1; SHA-256 hex is ASCII so substring check on raw bytes works.)
+    audit_sha = verification["file_checksums"]["audit_log.csv"]["sha256"]
+    pdf_bytes = zf.read("summary.pdf")
+    assert audit_sha.encode("ascii") in pdf_bytes, (
+        f"audit_log.csv SHA-256 {audit_sha} not found inside summary.pdf"
+    )
+
+    # BCO is the same dict the BCO endpoint returns; spot-check spec_version
+    bco = _json.loads(zf.read("campaign_bco.json"))
+    assert bco["spec_version"] == "https://w3id.org/ieee/ieee-2791-schema/"
+
+
 def test_other_org_cannot_see_campaign():
     r = client.get(
         f"/api/v1/campaigns/{_CAMPAIGN_ID}",
@@ -701,6 +771,7 @@ def _run_all():
         test_verify_audit_chain_returns_pass,
         test_verify_audit_chain_detects_tamper,
         test_export_bco_has_required_domains_and_valid_etag,
+        test_export_evidence_book_zip_contents_and_checksums,
         test_revoke_cro_upload_credential_hides_from_active_list,
         test_other_org_cannot_see_campaign,
     ]

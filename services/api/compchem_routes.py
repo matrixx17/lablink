@@ -40,6 +40,7 @@ from sqlalchemy.orm import Session
 from auth import resolve_auth, require_org_access, verify_api_key
 from compchem_bco import build_bco
 from compchem_ingest import ingest_run_manifest
+from evidence_book import build_evidence_book, EvidenceBookTooLarge
 from demo_seed import (
     DEMO_ADMIN_EMAIL,
     DEMO_ADMIN_PASSWORD,
@@ -1914,6 +1915,49 @@ def export_campaign_bco(
         content=json.dumps(bco, indent=2, default=str),
         media_type="application/json",
         headers=headers,
+    )
+
+
+@router.get("/api/v1/campaigns/{campaign_id}/export/evidence-book")
+def export_campaign_evidence_book(
+    campaign_id: int,
+    org_id: str = Query("default-org"),
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    """
+    Bundle the campaign as a downloadable Evidence Book ZIP containing
+    summary.pdf, runs.csv, molecules.csv, metrics.csv, audit_log.csv,
+    campaign_bco.json, and verification.json (with SHA-256 of every other
+    file plus campaign-scoped audit chain status).
+
+    Streamed from in-memory bytes; no temp files. Refuses with HTTP 413 if
+    the campaign is too large to fit comfortably in RAM — use the per-table
+    /export endpoint instead.
+    """
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
+    campaign, project = _load_campaign(db, campaign_id, org_id)
+
+    try:
+        zip_bytes, zip_sha256 = build_evidence_book(db, campaign, project, org_id)
+    except EvidenceBookTooLarge as e:
+        raise HTTPException(status_code=413, detail=str(e))
+
+    safe_name = "".join(
+        c if c.isalnum() or c in ("-", "_") else "_" for c in campaign.name
+    )
+    date_part = datetime.now(timezone.utc).date().isoformat()
+    filename = f"{safe_name}_EvidenceBook_{date_part}.zip"
+
+    return StreamingResponse(
+        iter([zip_bytes]),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Evidence-Book-Sha256": zip_sha256,
+            "X-Evidence-Book-Bytes": str(len(zip_bytes)),
+        },
     )
 
 
