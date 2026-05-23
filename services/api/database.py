@@ -322,6 +322,8 @@ class TimeseriesData(Base):
     timestamps = Column(ARRAY(Float), nullable=True)
     values = Column(ARRAY(Float), nullable=True)
     source_instrument = Column(String(255), nullable=True)
+    # Parser context stored in DB column "metadata" (avoid SQLAlchemy attr name).
+    series_metadata = Column("metadata", JSONB, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

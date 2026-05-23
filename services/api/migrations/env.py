@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import (
     Base, FileRecord, WebhookSubscription, AuditLog, Baseline,
     RunRecord, MeasurementSeries, ApiKey,
+    Campaign, Batch, TimeseriesData, OfflineSample,
 )
 
 # Alembic Config object

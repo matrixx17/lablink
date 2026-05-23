@@ -1,33 +1,40 @@
 /**
- * Fetch the Evidence Book ZIP for a campaign and trigger a browser
- * download. Returns the response's Content-Disposition filename if the
- * server provided one, otherwise generates a sensible fallback.
+ * Download helpers for the campaign export endpoints.
  *
- * Done via fetch + blob + object URL (rather than a plain anchor) so we
- * can show a loading spinner on the button while the backend assembles
- * the package, and surface HTTP errors as a string instead of a noisy
- * browser-default navigation.
+ * The server route is `GET /api/v1/campaigns/{id}/export/evidence-book`
+ * with an optional `?format=` query that selects which artifact to bundle:
+ *
+ *   format=evidence-book  (default) — VDR-style provenance pack
+ *   format=batch-record              — pharmaceutical Batch Manufacturing
+ *                                     Record (wet lab only; 400 otherwise)
+ *
+ * Both downloads use fetch+blob so the calling button can show a loading
+ * spinner and surface non-2xx errors as strings rather than a browser-
+ * default navigation.
  */
-export async function downloadEvidenceBook(
+
+async function downloadZip(
   campaignId: string,
   orgId: string,
+  format: "evidence-book" | "batch-record",
+  fallbackPrefix: string,
 ): Promise<string> {
-  const url = `/api/v1/campaigns/${encodeURIComponent(
-    campaignId,
-  )}/export/evidence-book?org_id=${encodeURIComponent(orgId)}`;
+  const url =
+    `/api/v1/campaigns/${encodeURIComponent(campaignId)}` +
+    `/export/evidence-book` +
+    `?org_id=${encodeURIComponent(orgId)}` +
+    `&format=${encodeURIComponent(format)}`;
 
   const r = await fetch(url, { method: "GET" });
   if (!r.ok) {
     const text = await r.text().catch(() => "");
-    throw new Error(
-      `Evidence Book export failed (${r.status}): ${text || r.statusText}`,
-    );
+    throw new Error(`Export failed (${r.status}): ${text || r.statusText}`);
   }
 
   const blob = await r.blob();
   const cd = r.headers.get("Content-Disposition") || "";
   const match = /filename="([^"]+)"/.exec(cd);
-  const filename = match?.[1] ?? `evidence-book-${campaignId}.zip`;
+  const filename = match?.[1] ?? `${fallbackPrefix}-${campaignId}.zip`;
 
   const objectUrl = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -36,7 +43,20 @@ export async function downloadEvidenceBook(
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  // Browsers need a tick before revoking; defer.
   setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
   return filename;
+}
+
+export function downloadEvidenceBook(
+  campaignId: string,
+  orgId: string,
+): Promise<string> {
+  return downloadZip(campaignId, orgId, "evidence-book", "evidence-book");
+}
+
+export function downloadBatchRecord(
+  campaignId: string,
+  orgId: string,
+): Promise<string> {
+  return downloadZip(campaignId, orgId, "batch-record", "batch-record");
 }

@@ -27,6 +27,8 @@ export type WetlabBatch = {
   harvest_date?: string | null;
   status: string;
   extra_params?: Record<string, unknown> | null;
+  // Present only when fetched via campaignBatchesWithMetrics (?include_metrics=true).
+  summary_metrics?: WetlabBatchSummaryMetrics | null;
 };
 
 export type WetlabTimeseries = {
@@ -50,6 +52,23 @@ export type WetlabSample = {
   unit?: string | null;
   instrument?: string | null;
   qc_status: string;
+};
+
+export type WetlabQcResult = {
+  check_name: string;
+  status: "pass" | "warn" | "fail";
+  message: string;
+  numeric_value?: number | null;
+  timepoint_h?: number | null;
+  parameter?: string | null;
+};
+
+export type WetlabBatchSummaryMetrics = {
+  peak_vcd?: number | null;
+  final_titer?: number | null;
+  min_viability?: number | null;
+  run_duration_days?: number | null;
+  lead_condition?: boolean;
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
@@ -80,4 +99,21 @@ export const api = {
     request<WetlabTimeseries[]>(`/api/v1/batches/${id}/timeseries?${orgParam(orgId)}`),
   batchSamples: (id: string, orgId: string) =>
     request<WetlabSample[]>(`/api/v1/batches/${id}/samples?${orgParam(orgId)}`),
+  batchQc: (id: string, orgId: string, refresh = false) =>
+    request<WetlabQcResult[]>(
+      `/api/v1/batches/${id}/qc?${orgParam(orgId)}${refresh ? "&refresh=true" : ""}`,
+    ),
+  campaignBatchesWithMetrics: (id: string, orgId: string) =>
+    request<(WetlabBatch & { summary_metrics?: WetlabBatchSummaryMetrics })[]>(
+      `/api/v1/campaigns/${id}/batches?${orgParam(orgId)}&include_metrics=true`,
+    ),
+  campaignMethods: (id: string, orgId: string) =>
+    request<{
+      campaign_id: string;
+      generated_at: string;
+      paragraphs: Record<string, string>;
+      full_text: string;
+      missing_fields: string[];
+      instrument_summary: Record<string, unknown>;
+    }>(`/api/v1/campaigns/${id}/methods?${orgParam(orgId)}`),
 };

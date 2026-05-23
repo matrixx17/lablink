@@ -4,6 +4,7 @@ import BatchComparisonPage from "./pages/BatchComparisonPage";
 import BatchTimelinePage from "./pages/BatchTimelinePage";
 import CampaignDetailPage from "./pages/CampaignDetailPage";
 import CampaignsPage from "./pages/CampaignsPage";
+import MethodsExportPage from "./pages/MethodsExportPage";
 
 export default function App() {
   return (
@@ -15,6 +16,10 @@ export default function App() {
         <Route
           path="/campaigns/:campaignId/compare"
           element={<BatchComparisonPage />}
+        />
+        <Route
+          path="/campaigns/:campaignId/methods"
+          element={<MethodsExportPage />}
         />
         <Route
           path="/campaigns/:campaignId/batches/:batchId/timeline"

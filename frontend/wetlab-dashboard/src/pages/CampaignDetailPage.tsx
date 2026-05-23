@@ -17,7 +17,7 @@ import {
   SectionRule,
   StatusBadge,
 } from "../components/ui";
-import { downloadEvidenceBook } from "../lib/evidenceBook";
+import { downloadBatchRecord, downloadEvidenceBook } from "../lib/evidenceBook";
 import styles from "./pages.module.css";
 
 export default function CampaignDetailPage() {
@@ -27,6 +27,7 @@ export default function CampaignDetailPage() {
   const [batches, setBatches] = useState<WetlabBatch[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportingBatch, setExportingBatch] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -63,6 +64,20 @@ export default function CampaignDetailPage() {
       setExporting(false);
     }
   };
+
+  const onDownloadBatchRecord = async () => {
+    setExportingBatch(true);
+    setExportError(null);
+    try {
+      await downloadBatchRecord(campaign.id, orgId);
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExportingBatch(false);
+    }
+  };
+
+  const isWetlab = campaign.domain === "wetlab";
 
   const kpis: Kpi[] = [
     {
@@ -118,6 +133,20 @@ export default function CampaignDetailPage() {
             <PrimaryButton onClick={onDownload} loading={exporting}>
               {exporting ? "Bundling…" : "Download Evidence Book"}
             </PrimaryButton>
+            {isWetlab ? (
+              <SecondaryButton
+                onClick={onDownloadBatchRecord}
+                loading={exportingBatch}
+              >
+                {exportingBatch ? "Bundling…" : "Download Batch Record"}
+              </SecondaryButton>
+            ) : null}
+            <SecondaryButton
+              as="a"
+              href={withOrg(`/campaigns/${campaign.id}/methods`, orgId)}
+            >
+              Methods
+            </SecondaryButton>
             <SecondaryButton
               as="a"
               href={withOrg(`/campaigns/${campaign.id}/compare`, orgId)}

@@ -1,10 +1,11 @@
 """API routes for bioprocess runs, dashboard data, auth, and compliance."""
 
+import hmac
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -15,7 +16,7 @@ from database import (
     RunRecord, MeasurementSeries, FileRecord, AuditLog, RunStatus,
     Campaign, Batch, TimeseriesData, OfflineSample,
 )
-from evidence_book import build_evidence_book, EvidenceBookTooLarge
+from evidence_book import build_evidence_book, build_batch_record, EvidenceBookTooLarge
 from runs_service import get_or_create_run, rebuild_run_alignment, update_run_qc
 from transform import transform_run_to_asm
 
@@ -255,6 +256,15 @@ def soc2_readiness():
 # Wet lab: campaigns / batches / timeseries / offline samples
 # ---------------------------------------------------------------------------
 
+class BatchSummaryMetrics(BaseModel):
+    peak_vcd: Optional[float] = None
+    final_titer: Optional[float] = None
+    min_viability: Optional[float] = None
+    run_duration_days: Optional[float] = None
+    lead_condition: bool = False
+    qc_status: Optional[str] = None
+
+
 class BatchOut(BaseModel):
     id: str
     campaign_id: str
@@ -267,6 +277,7 @@ class BatchOut(BaseModel):
     harvest_date: Optional[str]
     status: str
     extra_params: Optional[Dict[str, Any]]
+    summary_metrics: Optional[BatchSummaryMetrics] = None
 
 
 class CampaignOut(BaseModel):
@@ -288,6 +299,7 @@ class TimeseriesOut(BaseModel):
     timestamps: List[float]
     values: List[float]
     source_instrument: Optional[str]
+    metadata: Optional[Dict[str, Any]] = None
     inoculation_unix: Optional[float] = None
 
 
@@ -364,9 +376,36 @@ def get_campaign(
     )
 
 
+@router.get("/api/v1/campaigns/{campaign_id}/methods")
+def get_campaign_methods(
+    campaign_id: str,
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    """Render a publication-ready methods section for a wet lab campaign."""
+    org_id, _ = auth
+    c = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+    if not c:
+        raise HTTPException(404, "Campaign not found")
+    require_org_access(org_id, c.org_id)
+    if c.domain != "wetlab":
+        raise HTTPException(
+            status_code=400,
+            detail="Methods export is only available for wet lab campaigns.",
+        )
+    from bioprocess_methods import generate_methods
+    return generate_methods(db, c)
+
+
 @router.get("/api/v1/campaigns/{campaign_id}/batches", response_model=List[BatchOut])
 def list_campaign_batches(
     campaign_id: str,
+    include_metrics: bool = Query(
+        False,
+        description="If true, compute peak_vcd / final_titer / min_viability "
+                    "/ run_duration_days / lead_condition per batch and return "
+                    "in summary_metrics.",
+    ),
     db: Session = Depends(get_db),
     auth: tuple = Depends(resolve_auth),
 ):
@@ -381,7 +420,68 @@ def list_campaign_batches(
         .order_by(Batch.batch_number)
         .all()
     )
-    return [_batch_to_out(b) for b in rows]
+
+    outs = [_batch_to_out(b) for b in rows]
+    if not include_metrics:
+        return outs
+
+    # Compute per-batch summary metrics in one offline-samples query.
+    if rows:
+        batch_ids = [b.id for b in rows]
+        samples = (
+            db.query(OfflineSample)
+            .filter(OfflineSample.batch_id.in_(batch_ids))
+            .all()
+        )
+        by_batch: Dict[str, List[OfflineSample]] = {}
+        for s in samples:
+            by_batch.setdefault(s.batch_id, []).append(s)
+
+        for b, out in zip(rows, outs):
+            ssamples = by_batch.get(b.id) or []
+            metrics = _compute_summary_metrics(b, ssamples)
+            out.summary_metrics = metrics
+    return outs
+
+
+def _compute_summary_metrics(
+    batch: "Batch", samples: List["OfflineSample"],
+) -> BatchSummaryMetrics:
+    """Derive peak_vcd / final_titer / min_viability / run_duration_days from
+    the batch's offline samples + extra_params. Cheap (single linear pass)."""
+    vcd_vals: List[float] = []
+    titer_pairs: List[tuple] = []
+    via_vals: List[float] = []
+    sample_times: List[float] = []
+    for s in samples:
+        if s.value is None:
+            continue
+        v = float(s.value)
+        if s.sample_time_hours is not None:
+            sample_times.append(float(s.sample_time_hours))
+        name = (s.measurement_name or "")
+        if name in ("vcd_e6_per_ml", "viable_cell_density_e6_per_ml"):
+            vcd_vals.append(v)
+        elif name == "titer_mg_per_l":
+            titer_pairs.append((s.sample_time_hours or 0.0, v))
+        elif name == "viability_percent":
+            via_vals.append(v)
+
+    titer_pairs.sort(key=lambda p: p[0])
+    final_titer = titer_pairs[-1][1] if titer_pairs else None
+    duration_days = None
+    if sample_times:
+        duration_days = (max(sample_times) - min(sample_times)) / 24.0
+
+    extra = batch.extra_params or {}
+    return BatchSummaryMetrics(
+        peak_vcd=max(vcd_vals) if vcd_vals else None,
+        final_titer=final_titer,
+        min_viability=min(via_vals) if via_vals else None,
+        run_duration_days=duration_days,
+        lead_condition=bool(extra.get("lead_condition")),
+        qc_status=extra.get("qc_status"),
+    )
 
 
 @router.get("/api/v1/batches/{batch_id}", response_model=BatchOut)
@@ -426,10 +526,49 @@ def list_batch_timeseries(
             unit=r.unit, timestamps=list(r.timestamps or []),
             values=list(r.values or []),
             source_instrument=r.source_instrument,
+            metadata=r.series_metadata,
             inoculation_unix=inoculation_unix,
         )
         for r in rows
     ]
+
+
+class QCResultOut(BaseModel):
+    check_name: str
+    status: str  # pass | warn | fail
+    message: str
+    numeric_value: Optional[float] = None
+    timepoint_h: Optional[float] = None
+    parameter: Optional[str] = None
+
+
+@router.get("/api/v1/batches/{batch_id}/qc", response_model=List[QCResultOut])
+def get_batch_qc(
+    batch_id: str,
+    refresh: bool = Query(False, description="Recompute even if cached"),
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    """
+    Return the wet-lab QC engine's results for a batch. Cached on
+    `Batch.extra_params["qc_results"]` between runs; pass `?refresh=true`
+    to force recomputation.
+    """
+    org_id, _ = auth
+    b = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not b:
+        raise HTTPException(404, "Batch not found")
+    c = db.query(Campaign).filter(Campaign.id == b.campaign_id).first()
+    if c is not None:
+        require_org_access(org_id, c.org_id)
+
+    cached = (b.extra_params or {}).get("qc_results")
+    if cached and not refresh:
+        return [QCResultOut(**r) for r in cached]
+
+    from bioprocess_qc import BioprocessQCEngine
+    results = BioprocessQCEngine.run_for_batch(db, batch_id)
+    return [QCResultOut(**r.to_dict()) for r in results]
 
 
 @router.get("/api/v1/batches/{batch_id}/samples", response_model=List[OfflineSampleOut])
@@ -467,19 +606,18 @@ def list_batch_samples(
 @router.get("/api/v1/campaigns/{campaign_id}/export/evidence-book")
 def export_campaign_evidence_book(
     campaign_id: str,
+    format: str = Query(
+        "evidence-book",
+        description="evidence-book (default) or batch-record (wet lab only)",
+    ),
     db: Session = Depends(get_db),
     auth: tuple = Depends(resolve_auth),
 ):
     """
-    Bundle the wet lab campaign as a downloadable Evidence Book ZIP:
-    summary.pdf, batches.csv, offline_samples.csv, timeseries_summary.csv,
-    audit_log.csv, provenance.json (wet-lab-native; NOT a BCO), and
-    verification.json with SHA-256 of every other file plus the
-    campaign-scoped audit chain status.
+    Bundle the wet lab campaign as a downloadable ZIP.
 
-    Built in memory; no temp files. Refuses with HTTP 413 if total
-    timeseries points exceed the cap — use /batches/{id}/timeseries for
-    raw streams.
+    format=evidence-book (default): VDR-style Evidence Book.
+    format=batch-record: pharmaceutical Batch Manufacturing Record (wet lab only).
     """
     org_id, _ = auth
     c = db.query(Campaign).filter(Campaign.id == campaign_id).first()
@@ -487,8 +625,23 @@ def export_campaign_evidence_book(
         raise HTTPException(404, "Campaign not found")
     require_org_access(org_id, c.org_id)
 
+    fmt = (format or "evidence-book").strip().lower()
+    if fmt not in ("evidence-book", "batch-record"):
+        raise HTTPException(400, f"Unsupported format '{format}'")
+
+    if fmt == "batch-record" and c.domain != "wetlab":
+        raise HTTPException(
+            status_code=400,
+            detail="Batch record export is only available for wet lab campaigns.",
+        )
+
     try:
-        zip_bytes, zip_sha256 = build_evidence_book(db, c, c.org_id)
+        if fmt == "batch-record":
+            zip_bytes, zip_sha256 = build_batch_record(db, c, c.org_id)
+            prefix = "BatchRecord"
+        else:
+            zip_bytes, zip_sha256 = build_evidence_book(db, c, c.org_id)
+            prefix = "EvidenceBook"
     except EvidenceBookTooLarge as e:
         raise HTTPException(status_code=413, detail=str(e))
 
@@ -496,17 +649,44 @@ def export_campaign_evidence_book(
         ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in c.name
     )
     date_part = datetime.now(timezone.utc).date().isoformat()
-    filename = f"{safe_name}_EvidenceBook_{date_part}.zip"
+    filename = f"{safe_name}_{prefix}_{date_part}.zip"
 
     return StreamingResponse(
         iter([zip_bytes]),
         media_type="application/zip",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
-            "X-Evidence-Book-Sha256": zip_sha256,
-            "X-Evidence-Book-Bytes": str(len(zip_bytes)),
+            "X-Export-Sha256": zip_sha256,
+            "X-Export-Bytes": str(len(zip_bytes)),
+            "X-Export-Format": fmt,
         },
     )
+
+
+def _demo_reset_secret_matches(provided: Optional[str]) -> bool:
+    expected = os.getenv("DEMO_RESET_SECRET", "")
+    return bool(expected and provided and hmac.compare_digest(provided, expected))
+
+
+@router.post("/api/v1/demo/wetlab/reset")
+def reset_wetlab_demo(
+    x_demo_reset_secret: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Delete and re-seed the demo wet lab campaign."""
+    if not _demo_reset_secret_matches(x_demo_reset_secret):
+        raise HTTPException(status_code=401, detail="Valid DEMO_RESET_SECRET required")
+
+    from wetlab_seed import delete_wetlab_demo, seed_wetlab_demo
+
+    delete_wetlab_demo(db)
+    result = seed_wetlab_demo(db)
+    reset_at = datetime.now(timezone.utc).isoformat()
+    return {
+        "status": "ok",
+        "reset_at": reset_at,
+        **result,
+    }
 
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static", "dashboard")
