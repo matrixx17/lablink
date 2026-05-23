@@ -97,12 +97,20 @@ export default function CampaignDetailPage() {
   ];
 
   return (
-    <div className={`${styles.grid} ${styles.reveal}`}>
+    <div className={styles.grid}>
       <HeroHeader
         eyebrow={extra.target ? `Target · ${extra.target}` : "Bioprocess campaign"}
         title={campaign.name}
         context={
-          campaign.description ? <p>{campaign.description}</p> : undefined
+          <>
+            {campaign.description ? <p>{campaign.description}</p> : null}
+            {extra.cro_partner && extra.delivery_date ? (
+              <p>
+                Delivered by <strong>{extra.cro_partner}</strong> on{" "}
+                <strong>{fmtDateOnly(extra.delivery_date)}</strong>.
+              </p>
+            ) : null}
+          </>
         }
         status={<StatusBadge status={extra.status || "active"} />}
         actions={

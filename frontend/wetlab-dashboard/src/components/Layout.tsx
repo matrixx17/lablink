@@ -22,25 +22,22 @@ export default function Layout() {
   return (
     <div className={styles.shell}>
       <aside className={styles.sidebar}>
-        <div className={styles.systemStatus}>
-          <span className={styles.systemStatusDot} aria-hidden />
-          <span>System nominal</span>
-        </div>
-
         <Link to={withOrg("/campaigns", orgId)} className={styles.brand}>
-          <span className={styles.mark} aria-hidden />
-          <div>
-            <strong>LabLink</strong>
-            <span>Bioprocess Console</span>
+          <div className={styles.wordmark}>
+            LabLink<em>.</em>
           </div>
+          <div className={styles.brandSub}>Bioprocess</div>
         </Link>
 
-        <nav className={styles.nav}>
-          <NavLink to={withOrg("/campaigns", orgId)}>Campaigns</NavLink>
-        </nav>
+        <div>
+          <div className={styles.navGroupLabel}>Workspace</div>
+          <nav className={styles.nav}>
+            <NavLink to={withOrg("/campaigns", orgId)} end>Campaigns</NavLink>
+          </nav>
+        </div>
 
         <div className={styles.orgBox}>
-          <label htmlFor="org">Org</label>
+          <label htmlFor="org">Organization</label>
           <input
             id="org"
             value={orgId}
@@ -48,9 +45,16 @@ export default function Layout() {
             placeholder="demo-therapeutics"
           />
         </div>
+
+        <div className={styles.footerNote}>
+          v0.1 · evidence-grade bioprocess provenance
+        </div>
       </aside>
+
       <main className={styles.main}>
-        <Outlet />
+        <div className={styles.mainInner}>
+          <Outlet />
+        </div>
       </main>
     </div>
   );

@@ -1,11 +1,15 @@
-/* Shared UI primitives for the LabLink Bioprocess Console.
-   Themed via CSS variables in styles.css so they look industrial in this
-   dashboard and editorial in the comp-chem one. */
+/*
+  Shared UI primitives — identical on both verticals (compchem + bioprocess).
+  Editorial enterprise: confident type, generous whitespace, single ink-blue
+  accent, no chrome, no animations.
+*/
 
 import styles from "./ui.module.css";
 import type React from "react";
 
-// ---- Hero header -----------------------------------------------------------
+// ============================================================
+// Hero header
+// ============================================================
 
 export function HeroHeader({
   eyebrow,
@@ -33,7 +37,9 @@ export function HeroHeader({
   );
 }
 
-// ---- KPI strip -------------------------------------------------------------
+// ============================================================
+// KPI strip
+// ============================================================
 
 export type Kpi = {
   label: string;
@@ -54,7 +60,7 @@ export function KpiStrip({ items }: { items: Kpi[] }) {
         >
           <div className={styles.kpiLabel}>{k.label}</div>
           <div className={styles.kpiValueRow}>
-            <span className={`${styles.kpiValue} num`}>{k.value}</span>
+            <span className={styles.kpiValue}>{k.value}</span>
             {k.unit ? <span className={styles.kpiUnit}>{k.unit}</span> : null}
           </div>
           {k.hint ? <div className={styles.kpiHint}>{k.hint}</div> : null}
@@ -64,7 +70,9 @@ export function KpiStrip({ items }: { items: Kpi[] }) {
   );
 }
 
-// ---- Section rule ----------------------------------------------------------
+// ============================================================
+// Section rule
+// ============================================================
 
 export function SectionRule({
   eyebrow,
@@ -86,7 +94,9 @@ export function SectionRule({
   );
 }
 
-// ---- Action bar / buttons --------------------------------------------------
+// ============================================================
+// Action bar + buttons
+// ============================================================
 
 export function ActionBar({ children }: { children: React.ReactNode }) {
   return <div className={styles.actionBar}>{children}</div>;
@@ -111,7 +121,11 @@ export function PrimaryButton({
 }) {
   if (as === "a") {
     return (
-      <a className={styles.primaryButton} href={href} aria-disabled={disabled || loading || undefined}>
+      <a
+        className={styles.primaryButton}
+        href={href}
+        aria-disabled={disabled || loading || undefined}
+      >
         {children}
       </a>
     );
@@ -134,30 +148,70 @@ export function SecondaryButton({
   children,
   onClick,
   disabled,
+  loading,
   as = "button",
   href,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
   disabled?: boolean;
+  loading?: boolean;
   as?: "button" | "a";
   href?: string;
 }) {
   if (as === "a") {
     return (
-      <a className={styles.secondaryButton} href={href}>
+      <a
+        className={styles.secondaryButton}
+        href={href}
+        aria-disabled={disabled || loading || undefined}
+      >
         {children}
       </a>
     );
   }
   return (
-    <button type="button" onClick={onClick} disabled={disabled} className={styles.secondaryButton}>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || loading}
+      className={styles.secondaryButton}
+      aria-busy={loading || undefined}
+    >
+      {loading ? <span className={styles.spinner} aria-hidden /> : null}
       {children}
     </button>
   );
 }
 
-// ---- Card (kept for back-compat; minimal styling) --------------------------
+export function TertiaryButton({
+  children,
+  onClick,
+  as = "button",
+  href,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  as?: "button" | "a";
+  href?: string;
+}) {
+  if (as === "a") {
+    return (
+      <a className={styles.tertiaryButton} href={href}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <button type="button" onClick={onClick} className={styles.tertiaryButton}>
+      {children}
+    </button>
+  );
+}
+
+// ============================================================
+// Card (used sparingly)
+// ============================================================
 
 export function Card({
   children,
@@ -169,7 +223,6 @@ export function Card({
   return <section className={`${styles.card} ${className}`}>{children}</section>;
 }
 
-// Legacy ad-hoc stat — kept so we don't have to touch every page in one shot.
 export function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className={styles.stat}>
@@ -179,7 +232,7 @@ export function Stat({ label, value }: { label: string; value: React.ReactNode }
   );
 }
 
-// Legacy page header — keep for any not-yet-redesigned page.
+// Back-compat shim so older pages that still import PageHeader keep working.
 export function PageHeader({
   title,
   eyebrow,
@@ -189,28 +242,31 @@ export function PageHeader({
   eyebrow?: string;
   actions?: React.ReactNode;
 }) {
-  return (
-    <HeroHeader eyebrow={eyebrow} title={title} actions={actions} />
-  );
+  return <HeroHeader eyebrow={eyebrow} title={title} actions={actions} />;
 }
 
-// ---- Status badge ----------------------------------------------------------
+// ============================================================
+// Status badge
+// ============================================================
 
 export function StatusBadge({ status }: { status?: string | null }) {
   const normalized = (status || "unknown").toLowerCase();
   const cls =
-    normalized.includes("fail") || normalized.includes("crash") || normalized.includes("bad") || normalized === "off"
+    normalized.includes("fail") || normalized.includes("crash") || normalized.includes("bad")
       ? styles.badge_fail
-      : normalized.includes("warn") || normalized.includes("flag") || normalized.includes("excursion")
+      : normalized.includes("warn") || normalized.includes("flag")
         ? styles.badge_warn
         : normalized.includes("complete") || normalized.includes("pass") || normalized.includes("normal")
-              || normalized.includes("harvest") || normalized.includes("verified") || normalized === "good"
+                || normalized.includes("lead") || normalized.includes("verified")
+                || normalized.includes("harvest")
           ? styles.badge_pass
           : styles.badge_neutral;
   return <span className={`${styles.badge} ${cls}`}>{status || "unknown"}</span>;
 }
 
-// ---- Data table ------------------------------------------------------------
+// ============================================================
+// Data table
+// ============================================================
 
 export function DataTable({ children }: { children: React.ReactNode }) {
   return (
@@ -220,7 +276,9 @@ export function DataTable({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ---- Empty / Error / formatting helpers -----------------------------------
+// ============================================================
+// Empty / Error / formatting
+// ============================================================
 
 export function EmptyState({ children }: { children: React.ReactNode }) {
   return <div className={styles.empty}>{children}</div>;
@@ -238,15 +296,20 @@ export function ErrorBox({ error }: { error: unknown }) {
 export function fmtDate(value?: string | null) {
   if (!value) return "—";
   return new Date(value).toLocaleString(undefined, {
-    year: "numeric", month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
 export function fmtDateOnly(value?: string | null) {
   if (!value) return "—";
   return new Date(value).toLocaleDateString(undefined, {
-    year: "numeric", month: "short", day: "numeric",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
   });
 }
 

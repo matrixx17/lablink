@@ -25,6 +25,7 @@ import {
   ErrorBox,
   fmtNumber,
   HeroHeader,
+  KpiStrip,
   SecondaryButton,
   SectionRule,
   StatusBadge,
@@ -56,8 +57,22 @@ function summarize(batch: WetlabBatch, samples: WetlabSample[]): BatchSummary {
   };
 }
 
-// SCADA palette: amber leads (winner), cyan supporting, slate baseline.
-const BAR_COLORS = ["#5dd0e0", "#94a3b8", "#f5a623"];
+// Editorial palette: ink for the lead, neutrals for the rest.
+const NEUTRAL_BAR = "#b3b9c4";
+const LEAD_BAR = "#14181f"; // ink
+
+const CHART_GRID = "rgba(20, 24, 31, 0.08)";
+const AXIS_INK = "#7a8290";
+const AXIS_TICK = "#4a5260";
+const TOOLTIP_CONTENT = {
+  background: "#ffffff",
+  border: "1px solid rgba(20,24,31,0.14)",
+  borderRadius: 6,
+  fontFamily: "Inter Tight",
+  fontSize: 12.5,
+  color: "#14181f",
+  boxShadow: "0 1px 0 rgba(20,24,31,0.06)",
+};
 
 export default function BatchComparisonPage() {
   const { campaignId = "" } = useParams();
@@ -117,22 +132,36 @@ export default function BatchComparisonPage() {
 
   if (error) return <ErrorBox error={error} />;
   if (!campaign || !summaries) {
-    return <EmptyState>Loading batch comparison…</EmptyState>;
+    return <div className={styles.centerMessage}>Loading batch comparison…</div>;
   }
 
-  // index the lead batch so we can recolor its bar amber
   const leadIndex = lead
-    ? chartRows.findIndex((r) => r.batch === (lead.batch.batch_number || lead.batch.id.slice(0, 8)))
+    ? chartRows.findIndex(
+        (r) => r.batch === (lead.batch.batch_number || lead.batch.id.slice(0, 8)),
+      )
     : -1;
 
-  const barFill = (i: number) =>
-    i === leadIndex ? "#f5a623" : BAR_COLORS[i % BAR_COLORS.length];
+  const barFill = (i: number) => (i === leadIndex ? LEAD_BAR : NEUTRAL_BAR);
 
   return (
-    <div className={`${styles.grid} ${styles.reveal}`}>
+    <div className={styles.grid}>
       <HeroHeader
         eyebrow="Side-by-side analysis"
-        title={`${campaign.name} — Batch comparison`}
+        title={`${campaign.name} — comparison`}
+        context={
+          lead ? (
+            <p>
+              Lead: <strong>{lead.batch.batch_number}</strong>. Final titer{" "}
+              <strong>{fmtNumber(lead.finalTiter, 0)} mg/L</strong>, peak VCD{" "}
+              <strong>{fmtNumber(lead.peakVcd, 2)} ×10⁶ cells/mL</strong>
+              {(lead.batch.extra_params as { condition_label?: string } | undefined)
+                ?.condition_label
+                ? ` — ${(lead.batch.extra_params as { condition_label?: string }).condition_label}`
+                : ""}
+              .
+            </p>
+          ) : undefined
+        }
         actions={
           <ActionBar>
             <SecondaryButton
@@ -145,72 +174,65 @@ export default function BatchComparisonPage() {
         }
       />
 
-      {lead ? (
-        <div className={styles.winnerCallout}>
-          <MedalGlyph />
-          <div>
-            <strong>Lead candidate · {lead.batch.batch_number}</strong>
-            <p>
-              Final titer <span className="num">{fmtNumber(lead.finalTiter, 0)}</span> mg/L,
-              peak VCD <span className="num">{fmtNumber(lead.peakVcd, 2)}</span> ×10⁶
-              cells/mL
-              {(lead.batch.extra_params as { condition_label?: string } | undefined)
-                ?.condition_label
-                ? ` — ${(lead.batch.extra_params as { condition_label?: string }).condition_label}`
-                : ""}
-              .
-            </p>
-          </div>
-        </div>
-      ) : null}
+      <KpiStrip
+        items={[
+          { label: "Batches", value: summaries.length },
+          {
+            label: "Best titer",
+            value: lead ? fmtNumber(lead.finalTiter, 0) : "—",
+            unit: lead ? "mg/L" : undefined,
+            tone: "good",
+          },
+          {
+            label: "Best peak VCD",
+            value: lead ? fmtNumber(lead.peakVcd, 2) : "—",
+            unit: lead ? "×10⁶/mL" : undefined,
+            tone: "good",
+          },
+          {
+            label: "Lead",
+            value: lead?.batch.batch_number || "—",
+          },
+        ]}
+      />
 
       <SectionRule eyebrow="Yield" title="Final titer (mg/L)" />
       <div className={styles.chartPanel}>
         <div className={styles.chartCanvas} style={{ width: "100%", height: 320 }}>
           <ResponsiveContainer>
-            <BarChart
-              data={chartRows}
-              margin={{ top: 16, right: 24, left: 8, bottom: 24 }}
-            >
-              <CartesianGrid strokeDasharray="2 4" stroke="rgba(245,166,35,0.12)" />
+            <BarChart data={chartRows} margin={{ top: 16, right: 24, left: 8, bottom: 24 }}>
+              <CartesianGrid strokeDasharray="2 4" stroke={CHART_GRID} />
               <XAxis
                 dataKey="batch"
-                stroke="#6f7e9b"
-                tick={{ fill: "#b8c3d6", fontFamily: "IBM Plex Mono", fontSize: 11 }}
+                stroke={AXIS_INK}
+                tick={{ fill: AXIS_TICK, fontFamily: "JetBrains Mono", fontSize: 11 }}
               />
               <YAxis
-                stroke="#6f7e9b"
-                tick={{ fill: "#b8c3d6", fontFamily: "IBM Plex Mono", fontSize: 11 }}
+                stroke={AXIS_INK}
+                tick={{ fill: AXIS_TICK, fontFamily: "JetBrains Mono", fontSize: 11 }}
                 label={{
                   value: "mg/L",
                   angle: -90,
                   position: "insideLeft",
-                  fill: "#6f7e9b",
-                  fontFamily: "IBM Plex Mono",
+                  fill: AXIS_INK,
+                  fontFamily: "JetBrains Mono",
                   fontSize: 11,
                 }}
               />
               <Tooltip
-                contentStyle={{
-                  background: "#0a1228",
-                  border: "1px solid rgba(245,166,35,0.4)",
-                  borderRadius: 2,
-                  fontFamily: "IBM Plex Mono",
-                  fontSize: 12,
-                  color: "#e7ecf3",
-                }}
-                cursor={{ fill: "rgba(245,166,35,0.06)" }}
+                contentStyle={TOOLTIP_CONTENT}
+                cursor={{ fill: "rgba(20,24,31,0.04)" }}
                 formatter={(v) => fmtNumber(typeof v === "number" ? v : Number(v), 0)}
                 labelFormatter={(l) => `Batch ${l}`}
               />
               <Legend
                 wrapperStyle={{
-                  fontFamily: "IBM Plex Mono",
-                  fontSize: 11,
-                  color: "#b8c3d6",
+                  fontFamily: "Inter Tight",
+                  fontSize: 12,
+                  color: "#4a5260",
                 }}
               />
-              <Bar dataKey="final_titer_mg_per_l" name="Final titer (mg/L)" radius={[2, 2, 0, 0]}>
+              <Bar dataKey="final_titer_mg_per_l" name="Final titer (mg/L)" radius={[3, 3, 0, 0]}>
                 {chartRows.map((_, i) => (
                   <Cell key={i} fill={barFill(i)} />
                 ))}
@@ -224,49 +246,39 @@ export default function BatchComparisonPage() {
       <div className={styles.chartPanel}>
         <div className={styles.chartCanvas} style={{ width: "100%", height: 320 }}>
           <ResponsiveContainer>
-            <BarChart
-              data={chartRows}
-              margin={{ top: 16, right: 24, left: 8, bottom: 24 }}
-            >
-              <CartesianGrid strokeDasharray="2 4" stroke="rgba(245,166,35,0.12)" />
+            <BarChart data={chartRows} margin={{ top: 16, right: 24, left: 8, bottom: 24 }}>
+              <CartesianGrid strokeDasharray="2 4" stroke={CHART_GRID} />
               <XAxis
                 dataKey="batch"
-                stroke="#6f7e9b"
-                tick={{ fill: "#b8c3d6", fontFamily: "IBM Plex Mono", fontSize: 11 }}
+                stroke={AXIS_INK}
+                tick={{ fill: AXIS_TICK, fontFamily: "JetBrains Mono", fontSize: 11 }}
               />
               <YAxis
-                stroke="#6f7e9b"
-                tick={{ fill: "#b8c3d6", fontFamily: "IBM Plex Mono", fontSize: 11 }}
+                stroke={AXIS_INK}
+                tick={{ fill: AXIS_TICK, fontFamily: "JetBrains Mono", fontSize: 11 }}
                 label={{
                   value: "×10⁶/mL",
                   angle: -90,
                   position: "insideLeft",
-                  fill: "#6f7e9b",
-                  fontFamily: "IBM Plex Mono",
+                  fill: AXIS_INK,
+                  fontFamily: "JetBrains Mono",
                   fontSize: 11,
                 }}
               />
               <Tooltip
-                contentStyle={{
-                  background: "#0a1228",
-                  border: "1px solid rgba(245,166,35,0.4)",
-                  borderRadius: 2,
-                  fontFamily: "IBM Plex Mono",
-                  fontSize: 12,
-                  color: "#e7ecf3",
-                }}
-                cursor={{ fill: "rgba(245,166,35,0.06)" }}
+                contentStyle={TOOLTIP_CONTENT}
+                cursor={{ fill: "rgba(20,24,31,0.04)" }}
                 formatter={(v) => fmtNumber(typeof v === "number" ? v : Number(v), 2)}
                 labelFormatter={(l) => `Batch ${l}`}
               />
               <Legend
                 wrapperStyle={{
-                  fontFamily: "IBM Plex Mono",
-                  fontSize: 11,
-                  color: "#b8c3d6",
+                  fontFamily: "Inter Tight",
+                  fontSize: 12,
+                  color: "#4a5260",
                 }}
               />
-              <Bar dataKey="peak_vcd_e6_per_ml" name="Peak VCD (×10⁶/mL)" radius={[2, 2, 0, 0]}>
+              <Bar dataKey="peak_vcd_e6_per_ml" name="Peak VCD (×10⁶/mL)" radius={[3, 3, 0, 0]}>
                 {chartRows.map((_, i) => (
                   <Cell key={i} fill={barFill(i)} />
                 ))}
@@ -276,7 +288,7 @@ export default function BatchComparisonPage() {
         </div>
       </div>
 
-      <SectionRule eyebrow="Roster" title="All batches" />
+      <SectionRule eyebrow="Roster" title={`Batches (${summaries.length})`} />
       <DataTable>
         <thead>
           <tr>
@@ -317,26 +329,5 @@ export default function BatchComparisonPage() {
         </tbody>
       </DataTable>
     </div>
-  );
-}
-
-function MedalGlyph() {
-  // Small inline-SVG "winner" mark — a concentric medal evoking
-  // batch-quality certification. Color via currentColor in CSS.
-  return (
-    <svg
-      width="48"
-      height="48"
-      viewBox="0 0 48 48"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      aria-hidden
-    >
-      <circle cx="24" cy="24" r="14" />
-      <circle cx="24" cy="24" r="9" />
-      <circle cx="24" cy="24" r="3" fill="currentColor" />
-      <path d="M14 12l-4 14M34 12l4 14" strokeWidth="1.2" />
-    </svg>
   );
 }

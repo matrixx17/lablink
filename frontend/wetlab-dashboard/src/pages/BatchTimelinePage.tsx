@@ -34,23 +34,21 @@ import {
 } from "../components/ui";
 import styles from "./pages.module.css";
 
-// SCADA palette — cyan and amber lead, deep red for excursions, then
-// muted accents for additional parameters. Deliberately not a generic
-// "rainbow" — only the lead trace, the setpoint trace, and the excursion
-// channel should command attention.
+// Editorial palette: ink-blue accent leads, muted ink+gray for supporting
+// traces, semantic red only for the excursion channel. No rainbow.
 const TRACE_COLORS: Record<string, string> = {
-  ph: "#5dd0e0",                            // cyan — measured
-  do_percent: "#f5a623",                    // amber — setpoint axis
-  temperature_c: "#a78bfa",                 // muted violet
-  agitation_rpm: "#94a3b8",                 // slate
-  viable_cell_density_e6_per_ml: "#4ade80", // green
-  viability_percent: "#86efac",
-  titer_mg_per_l: "#f59e0b",
-  glucose_g_per_l: "#fde68a",
-  lactate_g_per_l: "#fb923c",
-  osmolality_mosm: "#cbd5e1",
+  ph: "#1d2a4e",                            // accent (ink-blue)
+  do_percent: "#a36800",                    // warm (warn)
+  temperature_c: "#7a8290",                 // neutral
+  agitation_rpm: "#b3b9c4",                 // muted
+  viable_cell_density_e6_per_ml: "#1f7a4d", // good (green)
+  viability_percent: "#4a5260",
+  titer_mg_per_l: "#14181f",                // ink, headline metric
+  glucose_g_per_l: "#7a8290",
+  lactate_g_per_l: "#a36800",
+  osmolality_mosm: "#b3b9c4",
 };
-const FALLBACK = ["#5dd0e0", "#f5a623", "#4ade80", "#fb923c", "#a78bfa", "#cbd5e1", "#e64545"];
+const FALLBACK = ["#1d2a4e", "#a36800", "#1f7a4d", "#a32218", "#7a8290", "#4a5260"];
 
 const DEFAULT_SELECTED = new Set([
   "ph",
@@ -65,7 +63,7 @@ type QcFlag = {
   severity: "warn" | "fail";
 };
 
-// ---------- Helpers ---------------------------------------------------------
+// ---------- Helpers --------------------------------------------------------
 
 function hoursSinceInoculation(unixSeconds: number, inoculationUnix: number): number {
   return (unixSeconds - inoculationUnix) / 3600;
@@ -77,35 +75,12 @@ function paramColor(name: string, allParams: string[]): string {
   return FALLBACK[idx % FALLBACK.length];
 }
 
-function useRuntimeCounter(inoculationDate?: string | null): string {
-  // Reading the human elapsed time since inoculation, updated every second.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, []);
-  if (!inoculationDate) return "T+ --:--:--";
-  const t0 = new Date(inoculationDate).getTime();
-  const elapsed = Math.max(0, now - t0);
-  const totalSec = Math.floor(elapsed / 1000);
-  const days = Math.floor(totalSec / 86400);
-  const hours = Math.floor((totalSec % 86400) / 3600);
-  const mins = Math.floor((totalSec % 3600) / 60);
-  const secs = totalSec % 60;
-  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
-  if (days > 0) {
-    return `T+ ${days}d ${pad(hours)}:${pad(mins)}:${pad(secs)}`;
-  }
-  return `T+ ${pad(hours)}:${pad(mins)}:${pad(secs)}`;
-}
-
 function deriveQcFlags(
   series: WetlabTimeseries[],
   samples: WetlabSample[],
 ): QcFlag[] {
   const flags: QcFlag[] = [];
 
-  // DO excursion: < 30% sustained for ≥ 1 sample point
   const doSeries = series.find((s) => s.parameter_name === "do_percent");
   if (doSeries && doSeries.inoculation_unix != null) {
     doSeries.values.forEach((v, i) => {
@@ -120,7 +95,6 @@ function deriveQcFlags(
     });
   }
 
-  // pH deviation > 0.15 from running mean
   const phSeries = series.find((s) => s.parameter_name === "ph");
   if (phSeries && phSeries.inoculation_unix != null && phSeries.values.length > 10) {
     const tail = phSeries.values.slice(10);
@@ -137,7 +111,6 @@ function deriveQcFlags(
     });
   }
 
-  // VCD reversal during growth phase
   const vcdSamples = samples
     .filter((s) => s.measurement_name === "viable_cell_density_e6_per_ml")
     .sort((a, b) => (a.sample_time_hours ?? 0) - (b.sample_time_hours ?? 0));
@@ -155,7 +128,6 @@ function deriveQcFlags(
     }
   }
 
-  // Explicitly-flagged offline samples
   samples.forEach((s) => {
     if (s.qc_status === "warn" || s.qc_status === "fail") {
       flags.push({
@@ -167,7 +139,6 @@ function deriveQcFlags(
     }
   });
 
-  // Dedup: one flag per parameter per 6h bucket
   const seen = new Set<string>();
   return flags
     .sort((a, b) => a.hours - b.hours)
@@ -207,8 +178,6 @@ export default function BatchTimelinePage() {
       })
       .catch(setError);
   }, [batchId, orgId]);
-
-  const runtime = useRuntimeCounter(batch?.inoculation_date);
 
   const allParams = useMemo(() => {
     if (!series || !samples) return [];
@@ -264,7 +233,7 @@ export default function BatchTimelinePage() {
 
   if (error) return <ErrorBox error={error} />;
   if (!batch || !series || !samples) {
-    return <EmptyState>Connecting to batch telemetry…</EmptyState>;
+    return <div className={styles.centerMessage}>Loading batch telemetry…</div>;
   }
 
   const toggleParam = (p: string) => {
@@ -309,7 +278,7 @@ export default function BatchTimelinePage() {
   ];
 
   return (
-    <div className={`${styles.grid} ${styles.reveal}`}>
+    <div className={styles.grid}>
       <HeroHeader
         eyebrow={`Batch · ${batch.bioreactor_model || "Bioreactor"}`}
         title={batch.batch_number || `Batch ${batch.id.slice(0, 8)}`}
@@ -320,12 +289,7 @@ export default function BatchTimelinePage() {
             </p>
           ) : undefined
         }
-        status={
-          <>
-            <StatusBadge status={batch.status} />
-            <span className={styles.runtimeCounter}>{runtime}</span>
-          </>
-        }
+        status={<StatusBadge status={batch.status} />}
         actions={
           <ActionBar>
             <SecondaryButton
@@ -350,20 +314,18 @@ export default function BatchTimelinePage() {
 
       <div className={styles.chartPanel}>
         <div className={styles.chartHead}>
-          <span>signal · selected parameters</span>
-          <span className={styles.axisLabel}>t / hours since inoculation</span>
+          <span>Selected parameters</span>
+          <span className={styles.axisLabel}>t · hours since inoculation</span>
         </div>
         <div className={styles.toggleRow}>
           {allParams.map((p) => {
             const active = selected.has(p);
-            const c = paramColor(p, allParams);
             return (
               <button
                 key={p}
                 type="button"
                 onClick={() => toggleParam(p)}
                 className={active ? styles.toggleOn : styles.toggleOff}
-                style={active ? { background: c, borderColor: c, color: "#0a1228" } : { color: c }}
               >
                 {p}
               </button>
@@ -371,7 +333,7 @@ export default function BatchTimelinePage() {
           })}
         </div>
 
-        <div className={styles.chartCanvas} style={{ width: "100%", height: 460 }}>
+        <div className={styles.chartCanvas} style={{ width: "100%", height: 440 }}>
           <ResponsiveContainer>
             <ComposedChart
               data={chartData}
@@ -379,39 +341,40 @@ export default function BatchTimelinePage() {
             >
               <CartesianGrid
                 strokeDasharray="2 4"
-                stroke="rgba(245, 166, 35, 0.12)"
+                stroke="rgba(20, 24, 31, 0.08)"
               />
               <XAxis
                 dataKey="hours"
                 type="number"
                 domain={[0, 336]}
                 ticks={[0, 48, 96, 144, 192, 240, 288, 336]}
-                stroke="#6f7e9b"
-                tick={{ fill: "#b8c3d6", fontFamily: "IBM Plex Mono", fontSize: 11 }}
+                stroke="#7a8290"
+                tick={{ fill: "#4a5260", fontFamily: "JetBrains Mono", fontSize: 11 }}
                 label={{
                   value: "h",
                   position: "insideBottomRight",
                   offset: -2,
-                  fill: "#6f7e9b",
-                  fontFamily: "IBM Plex Mono",
+                  fill: "#7a8290",
+                  fontFamily: "JetBrains Mono",
                   fontSize: 11,
                 }}
               />
               <YAxis
-                stroke="#6f7e9b"
-                tick={{ fill: "#b8c3d6", fontFamily: "IBM Plex Mono", fontSize: 11 }}
+                stroke="#7a8290"
+                tick={{ fill: "#4a5260", fontFamily: "JetBrains Mono", fontSize: 11 }}
               />
               <Tooltip
                 contentStyle={{
-                  background: "#0a1228",
-                  border: "1px solid rgba(245,166,35,0.4)",
-                  borderRadius: 2,
-                  fontFamily: "IBM Plex Mono",
-                  fontSize: 12,
-                  color: "#e7ecf3",
+                  background: "#ffffff",
+                  border: "1px solid rgba(20,24,31,0.14)",
+                  borderRadius: 6,
+                  fontFamily: "Inter Tight",
+                  fontSize: 12.5,
+                  color: "#14181f",
+                  boxShadow: "0 1px 0 rgba(20,24,31,0.06)",
                 }}
                 cursor={{
-                  stroke: "rgba(245, 166, 35, 0.4)",
+                  stroke: "rgba(29, 42, 78, 0.4)",
                   strokeDasharray: "2 2",
                 }}
                 formatter={(value, name) => [
@@ -422,9 +385,9 @@ export default function BatchTimelinePage() {
               />
               <Legend
                 wrapperStyle={{
-                  fontFamily: "IBM Plex Mono",
-                  fontSize: 11,
-                  color: "#b8c3d6",
+                  fontFamily: "Inter Tight",
+                  fontSize: 12,
+                  color: "#4a5260",
                 }}
               />
               {continuousParams.map((s) => (
@@ -434,10 +397,9 @@ export default function BatchTimelinePage() {
                   dataKey={s.parameter_name}
                   stroke={paramColor(s.parameter_name, allParams)}
                   dot={false}
-                  strokeWidth={1.6}
+                  strokeWidth={1.5}
                   connectNulls
-                  isAnimationActive={true}
-                  animationDuration={800}
+                  isAnimationActive={false}
                 />
               ))}
               {offlineParams.map((p) => (

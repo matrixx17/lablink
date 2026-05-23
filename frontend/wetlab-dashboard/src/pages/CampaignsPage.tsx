@@ -39,18 +39,18 @@ export default function CampaignsPage() {
   }, [campaigns, filter]);
 
   return (
-    <div className={`${styles.grid} ${styles.reveal}`}>
+    <div className={styles.grid}>
       <HeroHeader
-        eyebrow="Campaign registry"
-        title="Bioprocess campaigns"
+        eyebrow="Campaigns"
+        title="Bioprocess, with provenance."
         context={
           <p>
-            Live and archived bioreactor campaigns across the organization.
-            Each campaign aggregates one or more batches with continuous
-            controller traces and discrete offline samples.
+            Every bioreactor campaign, every batch, every controller trace —
+            captured in a tamper-evident audit chain and packaged for
+            regulatory review.
           </p>
         }
-        actions={<SecondaryButton as="a" href="/docs">API docs</SecondaryButton>}
+        actions={<SecondaryButton as="a" href="/docs">API reference</SecondaryButton>}
       />
 
       {error ? <ErrorBox error={error} /> : null}
@@ -63,7 +63,9 @@ export default function CampaignsPage() {
           aria-label="Filter campaigns"
         />
         <span className={styles.muted}>
-          {loading ? "loading…" : `${rows.length} campaign${rows.length === 1 ? "" : "s"}`}
+          {loading
+            ? "loading…"
+            : `${rows.length} campaign${rows.length === 1 ? "" : "s"}`}
         </span>
       </div>
 
@@ -80,7 +82,7 @@ export default function CampaignsPage() {
           <thead>
             <tr>
               <th>Campaign</th>
-              <th>Target / Process</th>
+              <th>Target / process</th>
               <th>Status</th>
               <th>Batches</th>
               <th>Created</th>
