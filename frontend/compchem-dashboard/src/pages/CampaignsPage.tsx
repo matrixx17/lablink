@@ -44,15 +44,16 @@ export default function CampaignsPage() {
   return (
     <div className={`${styles.grid} ${styles.reveal}`}>
       <HeroHeader
-        eyebrow="Campaign registry"
-        title="Computational chemistry campaigns"
+        eyebrow="Campaigns"
+        title="Computational chemistry, with provenance."
         context={
           <p>
-            Docking, MD, DFT, and property runs aggregated by program. Each campaign
-            tracks compound provenance, QC, audit history, and SAR across iterations.
+            Every docking, molecular-dynamics, and DFT run on this workspace —
+            aggregated by program, traceable to the molecule, and signed into a
+            tamper-evident audit chain.
           </p>
         }
-        actions={<SecondaryButton as="a" href="/docs">API docs</SecondaryButton>}
+        actions={<SecondaryButton as="a" href="/docs">API reference</SecondaryButton>}
       />
 
       {error ? <ErrorBox error={error} /> : null}

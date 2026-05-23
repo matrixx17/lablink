@@ -1,112 +1,159 @@
 /*
-  LabLink Comp-Chem — Editorial / manuscript aesthetic.
+  LabLink — unified design system.
 
-  Warm paper ground, serif display headings, monospace data. Same token
-  names as the bioprocess console so shared UI primitives theme cleanly.
+  Inspiration: usul.com, benchling.com, tetrascience.com,
+  vivodyne.com, newlimit.com. Confident editorial typography,
+  generous whitespace, one accent, no chrome.
+
+  Same token names + same values across compchem and bioprocess so
+  shared component CSS theme-matches without per-vertical overrides.
 */
 
 :root {
-  --bg:        #f4f0e8;
-  --bg-elev:   #fffcf7;
-  --bg-elev-2: #ebe4d8;
-  --panel:     #faf6ef;
+  /* ---- Surface ---------------------------------------------------- */
+  --bg:        #fafaf7;   /* warm off-white page */
+  --bg-elev:   #ffffff;   /* lifted surface (cards, modals) */
+  --bg-elev-2: #f3f2ec;   /* hover / inset */
+  --bg-mute:   #f7f6f1;   /* tonal bands */
 
-  --ink:       #1c1917;
-  --ink-2:     #57534e;
-  --ink-3:     #78716c;
-  --rule:      rgba(28, 25, 23, 0.08);
-  --rule-2:    rgba(28, 25, 23, 0.14);
+  /* ---- Ink (text) ------------------------------------------------- */
+  --ink:       #14181f;
+  --ink-2:     #4a5260;
+  --ink-3:     #7a8290;
+  --ink-4:     #b3b9c4;
 
-  /* Primary accent — scientific blue (token name kept for shared ui.module.css) */
-  --amber:     #1d4ed8;
-  --amber-dim: rgba(29, 78, 216, 0.1);
-  --cyan:      #0e7490;
-  --cyan-dim:  rgba(14, 116, 144, 0.12);
-  --red:       #b91c1c;
-  --red-dim:   rgba(185, 28, 28, 0.1);
-  --green:     #15803d;
-  --green-dim: rgba(21, 128, 61, 0.1);
+  /* ---- Rules ------------------------------------------------------ */
+  --rule:      rgba(20, 24, 31, 0.08);
+  --rule-2:    rgba(20, 24, 31, 0.14);
+  --rule-3:    rgba(20, 24, 31, 0.22);
 
-  --display: "Source Serif 4", "IBM Plex Serif", Georgia, serif;
-  --body:    "IBM Plex Sans", system-ui, sans-serif;
-  --mono:    "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* ---- Accent: a single confident ink-blue, used sparingly -------- */
+  --accent:        #1d2a4e;
+  --accent-soft:   #eef0f7;
+  --accent-strong: #0f1a36;
 
-  --max: 1320px;
+  /* ---- Semantic --------------------------------------------------- */
+  --good:      #1f7a4d;
+  --good-soft: #e8f3ec;
+  --warn:      #a36800;
+  --warn-soft: #f7f0df;
+  --bad:       #a32218;
+  --bad-soft:  #f6e7e5;
+
+  /* ---- Typography ------------------------------------------------- */
+  --display: "Instrument Serif", "Source Serif 4", "Times New Roman", serif;
+  --body:    "Inter Tight", "Inter", system-ui, -apple-system, sans-serif;
+  --mono:    "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular,
+             Menlo, monospace;
+
+  /* ---- Layout ----------------------------------------------------- */
+  --max:     1240px;
+  --rail:    260px;
+  --pad-x:   56px;
 
   color: var(--ink);
   background: var(--bg);
   font-family: var(--body);
-  font-feature-settings: "ss01", "tnum";
+  font-feature-settings: "ss01", "cv11";
   font-size: 14.5px;
   line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 * { box-sizing: border-box; }
 
-body {
-  margin: 0;
-  background-image:
-    radial-gradient(circle at 12% 0%, rgba(29, 78, 216, 0.04), transparent 28%),
-    radial-gradient(circle at 88% 8%, rgba(14, 116, 144, 0.05), transparent 24%);
-}
+body { margin: 0; min-height: 100vh; }
 
 a { color: inherit; text-decoration: none; }
-a:hover { color: var(--amber); }
+a:hover { color: var(--accent); }
 
-button, input, select {
-  font: inherit;
-  color: inherit;
-}
+button, input, select, textarea { font: inherit; color: inherit; }
 
 input, select, textarea {
   background: var(--bg-elev);
   border: 1px solid var(--rule-2);
   color: var(--ink);
-  padding: 8px 10px;
-  border-radius: 3px;
-  font-family: var(--mono);
-  font-size: 12.5px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-
+input::placeholder, textarea::placeholder { color: var(--ink-4); }
 input:focus, select:focus, textarea:focus {
   outline: none;
-  border-color: var(--amber);
-  box-shadow: 0 0 0 2px var(--amber-dim);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 pre {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--ink-2);
+  background: var(--bg-mute);
+  padding: 14px 16px;
+  border-radius: 6px;
 }
 
-::selection { background: var(--amber-dim); color: var(--ink); }
+::selection { background: var(--ink); color: var(--bg); }
 
-h1, h2, h3, h4 {
+/* ---- Headings — editorial scale --------------------------------- */
+h1, h2, h3, h4 { color: var(--ink); margin: 0 0 0.4em; letter-spacing: -0.01em; }
+h1 {
   font-family: var(--display);
+  font-weight: 400;
+  font-size: clamp(2.6rem, 4.4vw, 3.8rem);
+  line-height: 1.02;
+  letter-spacing: -0.025em;
+}
+h2 {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: clamp(1.5rem, 2.4vw, 2rem);
+  line-height: 1.12;
+  letter-spacing: -0.015em;
+}
+h3 {
+  font-family: var(--body);
   font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--ink);
-  margin: 0 0 0.4em;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+}
+h4 {
+  font-family: var(--body);
+  font-weight: 600;
+  font-size: 1rem;
 }
 
-h1 { font-size: 2.35rem; line-height: 1.06; }
-h2 { font-size: 1.2rem; line-height: 1.25; }
-h3 { font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2); }
-
-p { margin: 0 0 0.85em; color: var(--ink-2); }
+p { margin: 0 0 0.8em; color: var(--ink-2); }
+strong { font-weight: 600; color: var(--ink); }
 
 .num, code, kbd {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
 }
+code {
+  background: var(--bg-mute);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  color: var(--ink);
+}
+
+/* Scrollbars: subtle */
+* { scrollbar-color: var(--rule-2) transparent; scrollbar-width: thin; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: var(--rule-2); border-radius: 999px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--rule-3); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
 }

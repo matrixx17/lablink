@@ -1,9 +1,15 @@
-/* Shared UI primitives for the LabLink Comp-Chem dashboard.
-   Themed via CSS variables in styles.css — editorial light here,
-   industrial SCADA in the bioprocess console. */
+/*
+  Shared UI primitives — identical on both verticals (compchem + bioprocess).
+  Editorial enterprise: confident type, generous whitespace, single ink-blue
+  accent, no chrome, no animations.
+*/
 
 import styles from "./ui.module.css";
 import type React from "react";
+
+// ============================================================
+// Hero header
+// ============================================================
 
 export function HeroHeader({
   eyebrow,
@@ -31,6 +37,10 @@ export function HeroHeader({
   );
 }
 
+// ============================================================
+// KPI strip
+// ============================================================
+
 export type Kpi = {
   label: string;
   value: React.ReactNode;
@@ -50,7 +60,7 @@ export function KpiStrip({ items }: { items: Kpi[] }) {
         >
           <div className={styles.kpiLabel}>{k.label}</div>
           <div className={styles.kpiValueRow}>
-            <span className={`${styles.kpiValue} num`}>{k.value}</span>
+            <span className={styles.kpiValue}>{k.value}</span>
             {k.unit ? <span className={styles.kpiUnit}>{k.unit}</span> : null}
           </div>
           {k.hint ? <div className={styles.kpiHint}>{k.hint}</div> : null}
@@ -59,6 +69,10 @@ export function KpiStrip({ items }: { items: Kpi[] }) {
     </div>
   );
 }
+
+// ============================================================
+// Section rule
+// ============================================================
 
 export function SectionRule({
   eyebrow,
@@ -79,6 +93,10 @@ export function SectionRule({
     </div>
   );
 }
+
+// ============================================================
+// Action bar + buttons
+// ============================================================
 
 export function ActionBar({ children }: { children: React.ReactNode }) {
   return <div className={styles.actionBar}>{children}</div>;
@@ -103,7 +121,11 @@ export function PrimaryButton({
 }) {
   if (as === "a") {
     return (
-      <a className={styles.primaryButton} href={href} aria-disabled={disabled || loading || undefined}>
+      <a
+        className={styles.primaryButton}
+        href={href}
+        aria-disabled={disabled || loading || undefined}
+      >
         {children}
       </a>
     );
@@ -139,18 +161,57 @@ export function SecondaryButton({
 }) {
   if (as === "a") {
     return (
-      <a className={styles.secondaryButton} href={href}>
+      <a
+        className={styles.secondaryButton}
+        href={href}
+        aria-disabled={disabled || loading || undefined}
+      >
         {children}
       </a>
     );
   }
   return (
-    <button type="button" onClick={onClick} disabled={disabled || loading} className={styles.secondaryButton} aria-busy={loading || undefined}>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || loading}
+      className={styles.secondaryButton}
+      aria-busy={loading || undefined}
+    >
       {loading ? <span className={styles.spinner} aria-hidden /> : null}
       {children}
     </button>
   );
 }
+
+export function TertiaryButton({
+  children,
+  onClick,
+  as = "button",
+  href,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  as?: "button" | "a";
+  href?: string;
+}) {
+  if (as === "a") {
+    return (
+      <a className={styles.tertiaryButton} href={href}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <button type="button" onClick={onClick} className={styles.tertiaryButton}>
+      {children}
+    </button>
+  );
+}
+
+// ============================================================
+// Card (used sparingly)
+// ============================================================
 
 export function Card({
   children,
@@ -171,6 +232,7 @@ export function Stat({ label, value }: { label: string; value: React.ReactNode }
   );
 }
 
+// Back-compat shim so older pages that still import PageHeader keep working.
 export function PageHeader({
   title,
   eyebrow,
@@ -183,6 +245,10 @@ export function PageHeader({
   return <HeroHeader eyebrow={eyebrow} title={title} actions={actions} />;
 }
 
+// ============================================================
+// Status badge
+// ============================================================
+
 export function StatusBadge({ status }: { status?: string | null }) {
   const normalized = (status || "unknown").toLowerCase();
   const cls =
@@ -191,11 +257,16 @@ export function StatusBadge({ status }: { status?: string | null }) {
       : normalized.includes("warn") || normalized.includes("flag")
         ? styles.badge_warn
         : normalized.includes("complete") || normalized.includes("pass") || normalized.includes("normal")
-              || normalized.includes("lead") || normalized.includes("verified")
+                || normalized.includes("lead") || normalized.includes("verified")
+                || normalized.includes("harvest")
           ? styles.badge_pass
           : styles.badge_neutral;
   return <span className={`${styles.badge} ${cls}`}>{status || "unknown"}</span>;
 }
+
+// ============================================================
+// Data table
+// ============================================================
 
 export function DataTable({ children }: { children: React.ReactNode }) {
   return (
@@ -204,6 +275,10 @@ export function DataTable({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+
+// ============================================================
+// Empty / Error / formatting
+// ============================================================
 
 export function EmptyState({ children }: { children: React.ReactNode }) {
   return <div className={styles.empty}>{children}</div>;
@@ -221,15 +296,20 @@ export function ErrorBox({ error }: { error: unknown }) {
 export function fmtDate(value?: string | null) {
   if (!value) return "—";
   return new Date(value).toLocaleString(undefined, {
-    year: "numeric", month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
 export function fmtDateOnly(value?: string | null) {
   if (!value) return "—";
   return new Date(value).toLocaleDateString(undefined, {
-    year: "numeric", month: "short", day: "numeric",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
   });
 }
 
