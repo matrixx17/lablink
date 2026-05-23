@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,7 @@ from database import (
     RunRecord, MeasurementSeries, FileRecord, AuditLog, RunStatus,
     Campaign, Batch, TimeseriesData, OfflineSample,
 )
+from evidence_book import build_evidence_book, EvidenceBookTooLarge
 from runs_service import get_or_create_run, rebuild_run_alignment, update_run_qc
 from transform import transform_run_to_asm
 
@@ -461,6 +462,51 @@ def list_batch_samples(
         )
         for r in rows
     ]
+
+
+@router.get("/api/v1/campaigns/{campaign_id}/export/evidence-book")
+def export_campaign_evidence_book(
+    campaign_id: str,
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    """
+    Bundle the wet lab campaign as a downloadable Evidence Book ZIP:
+    summary.pdf, batches.csv, offline_samples.csv, timeseries_summary.csv,
+    audit_log.csv, provenance.json (wet-lab-native; NOT a BCO), and
+    verification.json with SHA-256 of every other file plus the
+    campaign-scoped audit chain status.
+
+    Built in memory; no temp files. Refuses with HTTP 413 if total
+    timeseries points exceed the cap — use /batches/{id}/timeseries for
+    raw streams.
+    """
+    org_id, _ = auth
+    c = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+    if not c:
+        raise HTTPException(404, "Campaign not found")
+    require_org_access(org_id, c.org_id)
+
+    try:
+        zip_bytes, zip_sha256 = build_evidence_book(db, c, c.org_id)
+    except EvidenceBookTooLarge as e:
+        raise HTTPException(status_code=413, detail=str(e))
+
+    safe_name = "".join(
+        ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in c.name
+    )
+    date_part = datetime.now(timezone.utc).date().isoformat()
+    filename = f"{safe_name}_EvidenceBook_{date_part}.zip"
+
+    return StreamingResponse(
+        iter([zip_bytes]),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Evidence-Book-Sha256": zip_sha256,
+            "X-Evidence-Book-Bytes": str(len(zip_bytes)),
+        },
+    )
 
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static", "dashboard")

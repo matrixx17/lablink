@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import {
   Bar,
   BarChart,
@@ -19,11 +19,15 @@ import {
 } from "../api/client";
 import { useOrgId, withOrg } from "../components/Layout";
 import {
-  Card,
+  ActionBar,
+  DataTable,
   EmptyState,
   ErrorBox,
   fmtNumber,
-  PageHeader,
+  HeroHeader,
+  SecondaryButton,
+  SectionRule,
+  StatusBadge,
 } from "../components/ui";
 import styles from "./pages.module.css";
 
@@ -40,7 +44,8 @@ function summarize(batch: WetlabBatch, samples: WetlabSample[]): BatchSummary {
   const vcd = samples
     .filter(
       (s) =>
-        s.measurement_name === "viable_cell_density_e6_per_ml" && s.value != null
+        s.measurement_name === "viable_cell_density_e6_per_ml" &&
+        s.value != null,
     )
     .map((s) => s.value as number);
 
@@ -51,7 +56,8 @@ function summarize(batch: WetlabBatch, samples: WetlabSample[]): BatchSummary {
   };
 }
 
-const BAR_COLORS = ["#94a3b8", "#60a5fa", "#10b981"];
+// SCADA palette: amber leads (winner), cyan supporting, slate baseline.
+const BAR_COLORS = ["#5dd0e0", "#94a3b8", "#f5a623"];
 
 export default function BatchComparisonPage() {
   const { campaignId = "" } = useParams();
@@ -76,10 +82,10 @@ export default function BatchComparisonPage() {
           batches.map(async (b) => {
             const samples = await api.batchSamples(b.id, orgId);
             return summarize(b, samples);
-          })
+          }),
         );
         enriched.sort((a, b) =>
-          (a.batch.batch_number || "").localeCompare(b.batch.batch_number || "")
+          (a.batch.batch_number || "").localeCompare(b.batch.batch_number || ""),
         );
         setSummaries(enriched);
       } catch (e) {
@@ -105,133 +111,232 @@ export default function BatchComparisonPage() {
     return summaries.reduce(
       (best, cur) =>
         (cur.finalTiter ?? -Infinity) > (best.finalTiter ?? -Infinity) ? cur : best,
-      summaries[0]
+      summaries[0],
     );
   }, [summaries]);
 
   if (error) return <ErrorBox error={error} />;
   if (!campaign || !summaries) {
-    return <EmptyState>Loading batch comparison...</EmptyState>;
+    return <EmptyState>Loading batch comparison…</EmptyState>;
   }
 
+  // index the lead batch so we can recolor its bar amber
+  const leadIndex = lead
+    ? chartRows.findIndex((r) => r.batch === (lead.batch.batch_number || lead.batch.id.slice(0, 8)))
+    : -1;
+
+  const barFill = (i: number) =>
+    i === leadIndex ? "#f5a623" : BAR_COLORS[i % BAR_COLORS.length];
+
   return (
-    <div className={styles.grid}>
-      <PageHeader
-        eyebrow="Campaign comparison"
-        title={`${campaign.name} — Batches`}
+    <div className={`${styles.grid} ${styles.reveal}`}>
+      <HeroHeader
+        eyebrow="Side-by-side analysis"
+        title={`${campaign.name} — Batch comparison`}
         actions={
-          <Link
-            className={styles.secondaryButton}
-            to={withOrg(`/campaigns/${campaignId}`, orgId)}
-          >
-            Back to campaign
-          </Link>
+          <ActionBar>
+            <SecondaryButton
+              as="a"
+              href={withOrg(`/campaigns/${campaignId}`, orgId)}
+            >
+              Back to campaign
+            </SecondaryButton>
+          </ActionBar>
         }
       />
 
-      {lead && (
-        <Card>
-          <h2>Why we picked {lead.batch.batch_number}</h2>
-          <p>
-            Final titer <strong>{fmtNumber(lead.finalTiter, 0)} mg/L</strong>,
-            peak VCD <strong>{fmtNumber(lead.peakVcd, 2)} ×10⁶ cells/mL</strong>
-            {(lead.batch.extra_params as { condition_label?: string } | undefined)
-              ?.condition_label
-              ? ` — ${(lead.batch.extra_params as { condition_label?: string }).condition_label}`
-              : ""}
-            .
-          </p>
-        </Card>
-      )}
+      {lead ? (
+        <div className={styles.winnerCallout}>
+          <MedalGlyph />
+          <div>
+            <strong>Lead candidate · {lead.batch.batch_number}</strong>
+            <p>
+              Final titer <span className="num">{fmtNumber(lead.finalTiter, 0)}</span> mg/L,
+              peak VCD <span className="num">{fmtNumber(lead.peakVcd, 2)}</span> ×10⁶
+              cells/mL
+              {(lead.batch.extra_params as { condition_label?: string } | undefined)
+                ?.condition_label
+                ? ` — ${(lead.batch.extra_params as { condition_label?: string }).condition_label}`
+                : ""}
+              .
+            </p>
+          </div>
+        </div>
+      ) : null}
 
-      <Card>
-        <h2>Final titer (mg/L)</h2>
-        <div style={{ width: "100%", height: 320 }}>
+      <SectionRule eyebrow="Yield" title="Final titer (mg/L)" />
+      <div className={styles.chartPanel}>
+        <div className={styles.chartCanvas} style={{ width: "100%", height: 320 }}>
           <ResponsiveContainer>
-            <BarChart data={chartRows} margin={{ top: 16, right: 24, left: 8, bottom: 24 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis dataKey="batch" />
-              <YAxis label={{ value: "mg/L", angle: -90, position: "insideLeft" }} />
+            <BarChart
+              data={chartRows}
+              margin={{ top: 16, right: 24, left: 8, bottom: 24 }}
+            >
+              <CartesianGrid strokeDasharray="2 4" stroke="rgba(245,166,35,0.12)" />
+              <XAxis
+                dataKey="batch"
+                stroke="#6f7e9b"
+                tick={{ fill: "#b8c3d6", fontFamily: "IBM Plex Mono", fontSize: 11 }}
+              />
+              <YAxis
+                stroke="#6f7e9b"
+                tick={{ fill: "#b8c3d6", fontFamily: "IBM Plex Mono", fontSize: 11 }}
+                label={{
+                  value: "mg/L",
+                  angle: -90,
+                  position: "insideLeft",
+                  fill: "#6f7e9b",
+                  fontFamily: "IBM Plex Mono",
+                  fontSize: 11,
+                }}
+              />
               <Tooltip
+                contentStyle={{
+                  background: "#0a1228",
+                  border: "1px solid rgba(245,166,35,0.4)",
+                  borderRadius: 2,
+                  fontFamily: "IBM Plex Mono",
+                  fontSize: 12,
+                  color: "#e7ecf3",
+                }}
+                cursor={{ fill: "rgba(245,166,35,0.06)" }}
                 formatter={(v) => fmtNumber(typeof v === "number" ? v : Number(v), 0)}
-                labelFormatter={(label) => `Batch ${label}`}
+                labelFormatter={(l) => `Batch ${l}`}
               />
-              <Legend />
-              <Bar dataKey="final_titer_mg_per_l" name="Final titer (mg/L)">
+              <Legend
+                wrapperStyle={{
+                  fontFamily: "IBM Plex Mono",
+                  fontSize: 11,
+                  color: "#b8c3d6",
+                }}
+              />
+              <Bar dataKey="final_titer_mg_per_l" name="Final titer (mg/L)" radius={[2, 2, 0, 0]}>
                 {chartRows.map((_, i) => (
-                  <Cell key={i} fill={BAR_COLORS[i % BAR_COLORS.length]} />
+                  <Cell key={i} fill={barFill(i)} />
                 ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
-      </Card>
+      </div>
 
-      <Card>
-        <h2>Peak VCD (×10⁶ cells/mL)</h2>
-        <div style={{ width: "100%", height: 320 }}>
+      <SectionRule eyebrow="Growth" title="Peak VCD (×10⁶ cells/mL)" />
+      <div className={styles.chartPanel}>
+        <div className={styles.chartCanvas} style={{ width: "100%", height: 320 }}>
           <ResponsiveContainer>
-            <BarChart data={chartRows} margin={{ top: 16, right: 24, left: 8, bottom: 24 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-              <XAxis dataKey="batch" />
-              <YAxis label={{ value: "×10⁶/mL", angle: -90, position: "insideLeft" }} />
-              <Tooltip
-                formatter={(v) => fmtNumber(typeof v === "number" ? v : Number(v), 2)}
-                labelFormatter={(label) => `Batch ${label}`}
+            <BarChart
+              data={chartRows}
+              margin={{ top: 16, right: 24, left: 8, bottom: 24 }}
+            >
+              <CartesianGrid strokeDasharray="2 4" stroke="rgba(245,166,35,0.12)" />
+              <XAxis
+                dataKey="batch"
+                stroke="#6f7e9b"
+                tick={{ fill: "#b8c3d6", fontFamily: "IBM Plex Mono", fontSize: 11 }}
               />
-              <Legend />
-              <Bar dataKey="peak_vcd_e6_per_ml" name="Peak VCD (×10⁶/mL)">
+              <YAxis
+                stroke="#6f7e9b"
+                tick={{ fill: "#b8c3d6", fontFamily: "IBM Plex Mono", fontSize: 11 }}
+                label={{
+                  value: "×10⁶/mL",
+                  angle: -90,
+                  position: "insideLeft",
+                  fill: "#6f7e9b",
+                  fontFamily: "IBM Plex Mono",
+                  fontSize: 11,
+                }}
+              />
+              <Tooltip
+                contentStyle={{
+                  background: "#0a1228",
+                  border: "1px solid rgba(245,166,35,0.4)",
+                  borderRadius: 2,
+                  fontFamily: "IBM Plex Mono",
+                  fontSize: 12,
+                  color: "#e7ecf3",
+                }}
+                cursor={{ fill: "rgba(245,166,35,0.06)" }}
+                formatter={(v) => fmtNumber(typeof v === "number" ? v : Number(v), 2)}
+                labelFormatter={(l) => `Batch ${l}`}
+              />
+              <Legend
+                wrapperStyle={{
+                  fontFamily: "IBM Plex Mono",
+                  fontSize: 11,
+                  color: "#b8c3d6",
+                }}
+              />
+              <Bar dataKey="peak_vcd_e6_per_ml" name="Peak VCD (×10⁶/mL)" radius={[2, 2, 0, 0]}>
                 {chartRows.map((_, i) => (
-                  <Cell key={i} fill={BAR_COLORS[i % BAR_COLORS.length]} />
+                  <Cell key={i} fill={barFill(i)} />
                 ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>
-      </Card>
+      </div>
 
-      <Card>
-        <h2>Batch summary</h2>
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-                <th>Batch</th>
-                <th>Condition</th>
-                <th>Final titer (mg/L)</th>
-                <th>Peak VCD (×10⁶/mL)</th>
-                <th>Status</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {summaries.map((s) => (
-                <tr key={s.batch.id}>
-                  <td>{s.batch.batch_number}</td>
-                  <td>
-                    {(s.batch.extra_params as { condition_label?: string } | undefined)
-                      ?.condition_label ?? "-"}
-                  </td>
-                  <td>{fmtNumber(s.finalTiter, 0)}</td>
-                  <td>{fmtNumber(s.peakVcd, 2)}</td>
-                  <td>{s.batch.status}</td>
-                  <td>
-                    <Link
-                      className={styles.secondaryButton}
-                      to={withOrg(
-                        `/campaigns/${campaignId}/batches/${s.batch.id}/timeline`,
-                        orgId
-                      )}
-                    >
-                      Timeline →
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      <SectionRule eyebrow="Roster" title="All batches" />
+      <DataTable>
+        <thead>
+          <tr>
+            <th>Batch</th>
+            <th>Condition</th>
+            <th>Final titer (mg/L)</th>
+            <th>Peak VCD (×10⁶/mL)</th>
+            <th>Status</th>
+            <th aria-label="actions" />
+          </tr>
+        </thead>
+        <tbody>
+          {summaries.map((s) => (
+            <tr key={s.batch.id}>
+              <td className="num">{s.batch.batch_number}</td>
+              <td>
+                {(s.batch.extra_params as { condition_label?: string } | undefined)
+                  ?.condition_label ?? "—"}
+              </td>
+              <td className="num">{fmtNumber(s.finalTiter, 0)}</td>
+              <td className="num">{fmtNumber(s.peakVcd, 2)}</td>
+              <td>
+                <StatusBadge status={s.batch.status} />
+              </td>
+              <td>
+                <SecondaryButton
+                  as="a"
+                  href={withOrg(
+                    `/campaigns/${campaignId}/batches/${s.batch.id}/timeline`,
+                    orgId,
+                  )}
+                >
+                  Timeline →
+                </SecondaryButton>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </DataTable>
     </div>
+  );
+}
+
+function MedalGlyph() {
+  // Small inline-SVG "winner" mark — a concentric medal evoking
+  // batch-quality certification. Color via currentColor in CSS.
+  return (
+    <svg
+      width="48"
+      height="48"
+      viewBox="0 0 48 48"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden
+    >
+      <circle cx="24" cy="24" r="14" />
+      <circle cx="24" cy="24" r="9" />
+      <circle cx="24" cy="24" r="3" fill="currentColor" />
+      <path d="M14 12l-4 14M34 12l4 14" strokeWidth="1.2" />
+    </svg>
   );
 }

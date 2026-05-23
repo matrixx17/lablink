@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import {
   CartesianGrid,
   ComposedChart,
@@ -19,26 +19,38 @@ import {
 } from "../api/client";
 import { useOrgId, withOrg } from "../components/Layout";
 import {
-  Card,
+  ActionBar,
+  DataTable,
   EmptyState,
   ErrorBox,
-  fmtDate,
+  fmtDateOnly,
   fmtNumber,
-  PageHeader,
+  HeroHeader,
+  Kpi,
+  KpiStrip,
+  SecondaryButton,
+  SectionRule,
   StatusBadge,
 } from "../components/ui";
 import styles from "./pages.module.css";
 
-const COLORS = [
-  "#2563eb", // blue
-  "#dc2626", // red
-  "#059669", // green
-  "#d97706", // amber
-  "#7c3aed", // violet
-  "#0891b2", // cyan
-  "#db2777", // pink
-  "#65a30d", // lime
-];
+// SCADA palette — cyan and amber lead, deep red for excursions, then
+// muted accents for additional parameters. Deliberately not a generic
+// "rainbow" — only the lead trace, the setpoint trace, and the excursion
+// channel should command attention.
+const TRACE_COLORS: Record<string, string> = {
+  ph: "#5dd0e0",                            // cyan — measured
+  do_percent: "#f5a623",                    // amber — setpoint axis
+  temperature_c: "#a78bfa",                 // muted violet
+  agitation_rpm: "#94a3b8",                 // slate
+  viable_cell_density_e6_per_ml: "#4ade80", // green
+  viability_percent: "#86efac",
+  titer_mg_per_l: "#f59e0b",
+  glucose_g_per_l: "#fde68a",
+  lactate_g_per_l: "#fb923c",
+  osmolality_mosm: "#cbd5e1",
+};
+const FALLBACK = ["#5dd0e0", "#f5a623", "#4ade80", "#fb923c", "#a78bfa", "#cbd5e1", "#e64545"];
 
 const DEFAULT_SELECTED = new Set([
   "ph",
@@ -53,20 +65,43 @@ type QcFlag = {
   severity: "warn" | "fail";
 };
 
-// ------------ Helpers ------------------------------------------------------
+// ---------- Helpers ---------------------------------------------------------
 
 function hoursSinceInoculation(unixSeconds: number, inoculationUnix: number): number {
   return (unixSeconds - inoculationUnix) / 3600;
 }
 
 function paramColor(name: string, allParams: string[]): string {
+  if (TRACE_COLORS[name]) return TRACE_COLORS[name];
   const idx = allParams.indexOf(name);
-  return COLORS[idx % COLORS.length];
+  return FALLBACK[idx % FALLBACK.length];
+}
+
+function useRuntimeCounter(inoculationDate?: string | null): string {
+  // Reading the human elapsed time since inoculation, updated every second.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  if (!inoculationDate) return "T+ --:--:--";
+  const t0 = new Date(inoculationDate).getTime();
+  const elapsed = Math.max(0, now - t0);
+  const totalSec = Math.floor(elapsed / 1000);
+  const days = Math.floor(totalSec / 86400);
+  const hours = Math.floor((totalSec % 86400) / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+  if (days > 0) {
+    return `T+ ${days}d ${pad(hours)}:${pad(mins)}:${pad(secs)}`;
+  }
+  return `T+ ${pad(hours)}:${pad(mins)}:${pad(secs)}`;
 }
 
 function deriveQcFlags(
   series: WetlabTimeseries[],
-  samples: WetlabSample[]
+  samples: WetlabSample[],
 ): QcFlag[] {
   const flags: QcFlag[] = [];
 
@@ -85,7 +120,7 @@ function deriveQcFlags(
     });
   }
 
-  // pH deviation > 0.15 from running mean (very rough)
+  // pH deviation > 0.15 from running mean
   const phSeries = series.find((s) => s.parameter_name === "ph");
   if (phSeries && phSeries.inoculation_unix != null && phSeries.values.length > 10) {
     const tail = phSeries.values.slice(10);
@@ -102,7 +137,7 @@ function deriveQcFlags(
     });
   }
 
-  // VCD reversal: any drop > 15% between consecutive offline samples in growth phase
+  // VCD reversal during growth phase
   const vcdSamples = samples
     .filter((s) => s.measurement_name === "viable_cell_density_e6_per_ml")
     .sort((a, b) => (a.sample_time_hours ?? 0) - (b.sample_time_hours ?? 0));
@@ -120,7 +155,7 @@ function deriveQcFlags(
     }
   }
 
-  // Offline samples explicitly flagged
+  // Explicitly-flagged offline samples
   samples.forEach((s) => {
     if (s.qc_status === "warn" || s.qc_status === "fail") {
       flags.push({
@@ -132,7 +167,7 @@ function deriveQcFlags(
     }
   });
 
-  // Collapse duplicate near-time flags per parameter (keep first per 6h bucket)
+  // Dedup: one flag per parameter per 6h bucket
   const seen = new Set<string>();
   return flags
     .sort((a, b) => a.hours - b.hours)
@@ -144,7 +179,7 @@ function deriveQcFlags(
     });
 }
 
-// ------------ Component ----------------------------------------------------
+// ---------- Component ------------------------------------------------------
 
 export default function BatchTimelinePage() {
   const { campaignId = "", batchId = "" } = useParams();
@@ -173,6 +208,8 @@ export default function BatchTimelinePage() {
       .catch(setError);
   }, [batchId, orgId]);
 
+  const runtime = useRuntimeCounter(batch?.inoculation_date);
+
   const allParams = useMemo(() => {
     if (!series || !samples) return [];
     const set = new Set<string>();
@@ -184,8 +221,6 @@ export default function BatchTimelinePage() {
   const chartData = useMemo(() => {
     if (!series || !samples) return [];
 
-    // Build a row per timepoint (hours since inoculation, rounded to nearest 0.1h)
-    // Merge continuous + offline by hours bucket so the tooltip can show both.
     type Row = { hours: number; [k: string]: number };
     const rows = new Map<number, Row>();
 
@@ -203,7 +238,6 @@ export default function BatchTimelinePage() {
       if (!selected.has(s.measurement_name)) return;
       const hours = Math.round((s.sample_time_hours ?? 0) * 10) / 10;
       if (!rows.has(hours)) rows.set(hours, { hours });
-      // Use distinct key for scatter so Line + Scatter don't collide
       rows.get(hours)![`${s.measurement_name}__offline`] = s.value ?? NaN;
     });
 
@@ -217,7 +251,7 @@ export default function BatchTimelinePage() {
 
   const continuousParams = useMemo(
     () => (series ? series.filter((s) => selected.has(s.parameter_name)) : []),
-    [series, selected]
+    [series, selected],
   );
   const offlineParams = useMemo(() => {
     if (!samples) return [];
@@ -230,7 +264,7 @@ export default function BatchTimelinePage() {
 
   if (error) return <ErrorBox error={error} />;
   if (!batch || !series || !samples) {
-    return <EmptyState>Loading batch timeline...</EmptyState>;
+    return <EmptyState>Connecting to batch telemetry…</EmptyState>;
   }
 
   const toggleParam = (p: string) => {
@@ -242,49 +276,94 @@ export default function BatchTimelinePage() {
     });
   };
 
+  const extra = (batch.extra_params || {}) as { condition_label?: string };
+
+  const kpis: Kpi[] = [
+    { label: "Status", value: batch.status, tone: "neutral" },
+    {
+      label: "Inoculated",
+      value: fmtDateOnly(batch.inoculation_date),
+      tone: "neutral",
+    },
+    {
+      label: "Harvest",
+      value: fmtDateOnly(batch.harvest_date),
+      tone: "neutral",
+    },
+    {
+      label: "Volume",
+      value: batch.volume_liters ? fmtNumber(batch.volume_liters, 2) : "—",
+      unit: batch.volume_liters ? "L" : undefined,
+      tone: "neutral",
+    },
+    {
+      label: "Cell line",
+      value: batch.cell_line || "—",
+      tone: "neutral",
+    },
+    {
+      label: "QC flags",
+      value: qcFlags.length,
+      tone: qcFlags.length === 0 ? "good" : qcFlags.some((f) => f.severity === "fail") ? "bad" : "warn",
+    },
+  ];
+
   return (
-    <div className={styles.grid}>
-      <PageHeader
-        eyebrow={`Batch / ${batch.bioreactor_model || "Bioreactor"}`}
+    <div className={`${styles.grid} ${styles.reveal}`}>
+      <HeroHeader
+        eyebrow={`Batch · ${batch.bioreactor_model || "Bioreactor"}`}
         title={batch.batch_number || `Batch ${batch.id.slice(0, 8)}`}
-        actions={
+        context={
+          extra.condition_label ? (
+            <p>
+              Condition: <strong>{extra.condition_label}</strong>
+            </p>
+          ) : undefined
+        }
+        status={
           <>
-            <Link
-              className={styles.secondaryButton}
-              to={withOrg(`/campaigns/${campaignId}/compare`, orgId)}
+            <StatusBadge status={batch.status} />
+            <span className={styles.runtimeCounter}>{runtime}</span>
+          </>
+        }
+        actions={
+          <ActionBar>
+            <SecondaryButton
+              as="a"
+              href={withOrg(`/campaigns/${campaignId}/compare`, orgId)}
             >
-              Batch Comparison →
-            </Link>
-            <Link
-              className={styles.secondaryButton}
-              to={withOrg(`/campaigns/${campaignId}`, orgId)}
+              Batch comparison →
+            </SecondaryButton>
+            <SecondaryButton
+              as="a"
+              href={withOrg(`/campaigns/${campaignId}`, orgId)}
             >
               Back to campaign
-            </Link>
-          </>
+            </SecondaryButton>
+          </ActionBar>
         }
       />
 
-      <div className={styles.stats}>
-        <Card><StatusBadge status={batch.status} /></Card>
-        <Card>Inoculated: {fmtDate(batch.inoculation_date)}</Card>
-        <Card>Harvest: {fmtDate(batch.harvest_date)}</Card>
-        <Card>Volume: {batch.volume_liters ? `${fmtNumber(batch.volume_liters, 2)} L` : "-"}</Card>
-        <Card>Cell line: {batch.cell_line || "-"}</Card>
-      </div>
+      <KpiStrip items={kpis} />
 
-      <Card>
-        <h2>Parameters</h2>
+      <SectionRule eyebrow="Telemetry" title="Continuous + offline trace" />
+
+      <div className={styles.chartPanel}>
+        <div className={styles.chartHead}>
+          <span>signal · selected parameters</span>
+          <span className={styles.axisLabel}>t / hours since inoculation</span>
+        </div>
         <div className={styles.toggleRow}>
           {allParams.map((p) => {
             const active = selected.has(p);
+            const c = paramColor(p, allParams);
             return (
               <button
                 key={p}
                 type="button"
                 onClick={() => toggleParam(p)}
                 className={active ? styles.toggleOn : styles.toggleOff}
-                style={active ? { borderColor: paramColor(p, allParams), color: paramColor(p, allParams) } : undefined}
+                style={active ? { background: c, borderColor: c, color: "#0a1228" } : { color: c }}
               >
                 {p}
               </button>
@@ -292,26 +371,62 @@ export default function BatchTimelinePage() {
           })}
         </div>
 
-        <div style={{ width: "100%", height: 460 }}>
+        <div className={styles.chartCanvas} style={{ width: "100%", height: 460 }}>
           <ResponsiveContainer>
-            <ComposedChart data={chartData} margin={{ top: 16, right: 24, left: 8, bottom: 24 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <ComposedChart
+              data={chartData}
+              margin={{ top: 16, right: 24, left: 8, bottom: 24 }}
+            >
+              <CartesianGrid
+                strokeDasharray="2 4"
+                stroke="rgba(245, 166, 35, 0.12)"
+              />
               <XAxis
                 dataKey="hours"
                 type="number"
                 domain={[0, 336]}
                 ticks={[0, 48, 96, 144, 192, 240, 288, 336]}
-                label={{ value: "Hours since inoculation", position: "insideBottom", offset: -8 }}
+                stroke="#6f7e9b"
+                tick={{ fill: "#b8c3d6", fontFamily: "IBM Plex Mono", fontSize: 11 }}
+                label={{
+                  value: "h",
+                  position: "insideBottomRight",
+                  offset: -2,
+                  fill: "#6f7e9b",
+                  fontFamily: "IBM Plex Mono",
+                  fontSize: 11,
+                }}
               />
-              <YAxis />
+              <YAxis
+                stroke="#6f7e9b"
+                tick={{ fill: "#b8c3d6", fontFamily: "IBM Plex Mono", fontSize: 11 }}
+              />
               <Tooltip
+                contentStyle={{
+                  background: "#0a1228",
+                  border: "1px solid rgba(245,166,35,0.4)",
+                  borderRadius: 2,
+                  fontFamily: "IBM Plex Mono",
+                  fontSize: 12,
+                  color: "#e7ecf3",
+                }}
+                cursor={{
+                  stroke: "rgba(245, 166, 35, 0.4)",
+                  strokeDasharray: "2 2",
+                }}
                 formatter={(value, name) => [
                   fmtNumber(typeof value === "number" ? value : Number(value), 3),
                   String(name).replace("__offline", " (offline)"),
                 ]}
                 labelFormatter={(h) => `t = ${fmtNumber(h as number, 1)} h`}
               />
-              <Legend />
+              <Legend
+                wrapperStyle={{
+                  fontFamily: "IBM Plex Mono",
+                  fontSize: 11,
+                  color: "#b8c3d6",
+                }}
+              />
               {continuousParams.map((s) => (
                 <Line
                   key={s.id}
@@ -319,9 +434,10 @@ export default function BatchTimelinePage() {
                   dataKey={s.parameter_name}
                   stroke={paramColor(s.parameter_name, allParams)}
                   dot={false}
-                  strokeWidth={1.5}
+                  strokeWidth={1.6}
                   connectNulls
-                  isAnimationActive={false}
+                  isAnimationActive={true}
+                  animationDuration={800}
                 />
               ))}
               {offlineParams.map((p) => (
@@ -336,37 +452,50 @@ export default function BatchTimelinePage() {
             </ComposedChart>
           </ResponsiveContainer>
         </div>
-      </Card>
+      </div>
 
-      <Card>
-        <h2>QC Flags</h2>
-        {qcFlags.length === 0 ? (
-          <EmptyState>No QC flags raised for this batch.</EmptyState>
-        ) : (
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Parameter</th>
-                  <th>Description</th>
-                  <th>Severity</th>
-                </tr>
-              </thead>
-              <tbody>
-                {qcFlags.map((f, i) => (
-                  <tr key={`${f.parameter}-${i}`}>
-                    <td>t = {fmtNumber(f.hours, 1)} h</td>
-                    <td>{f.parameter}</td>
-                    <td>{f.description}</td>
-                    <td><StatusBadge status={f.severity} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      <SectionRule
+        eyebrow="QC"
+        title={`Flags (${qcFlags.length})`}
+        actions={
+          qcFlags.length > 0 ? (
+            <StatusBadge
+              status={qcFlags.some((f) => f.severity === "fail") ? "fail" : "warn"}
+            />
+          ) : (
+            <StatusBadge status="pass" />
+          )
+        }
+      />
+
+      {qcFlags.length === 0 ? (
+        <EmptyState>No QC flags raised for this batch.</EmptyState>
+      ) : (
+        <DataTable>
+          <thead>
+            <tr>
+              <th>t</th>
+              <th>Parameter</th>
+              <th>Description</th>
+              <th>Severity</th>
+            </tr>
+          </thead>
+          <tbody>
+            {qcFlags.map((f, i) => (
+              <tr key={`${f.parameter}-${i}`}>
+                <td className="num">{fmtNumber(f.hours, 1)} h</td>
+                <td>
+                  <span className="num">{f.parameter}</span>
+                </td>
+                <td>{f.description}</td>
+                <td>
+                  <StatusBadge status={f.severity} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+      )}
     </div>
   );
 }

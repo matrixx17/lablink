@@ -22,18 +22,25 @@ export default function Layout() {
   return (
     <div className={styles.shell}>
       <aside className={styles.sidebar}>
+        <div className={styles.systemStatus}>
+          <span className={styles.systemStatusDot} aria-hidden />
+          <span>System nominal</span>
+        </div>
+
         <Link to={withOrg("/campaigns", orgId)} className={styles.brand}>
-          <span className={styles.mark}>LL</span>
+          <span className={styles.mark} aria-hidden />
           <div>
             <strong>LabLink</strong>
-            <span>Bioprocess</span>
+            <span>Bioprocess Console</span>
           </div>
         </Link>
+
         <nav className={styles.nav}>
           <NavLink to={withOrg("/campaigns", orgId)}>Campaigns</NavLink>
         </nav>
+
         <div className={styles.orgBox}>
-          <label htmlFor="org">Org ID</label>
+          <label htmlFor="org">Org</label>
           <input
             id="org"
             value={orgId}

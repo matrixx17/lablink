@@ -1,32 +1,127 @@
+/*
+  LabLink Bioprocess — Industrial Telemetry / SCADA aesthetic.
+
+  Dark navy ground, single warm amber for setpoints, soft cyan for
+  measured traces, saturated red for excursions. No purple, no white
+  cards, no soft shadows. Hairline rules, monospace data, scan-line
+  texture on the chart panels.
+*/
+
 :root {
-  color: #102033;
-  background: #f6f8fb;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+  /* Surfaces — graded darks rather than a flat bg */
+  --bg:        #0a1228;        /* page */
+  --bg-elev:   #0e1932;        /* card */
+  --bg-elev-2: #14213d;        /* hover / nested */
+  --panel:     #0c1830;        /* chart panels */
+
+  /* Ink */
+  --ink:       #e7ecf3;
+  --ink-2:     #b8c3d6;
+  --ink-3:     #6f7e9b;
+  --rule:      rgba(255, 255, 255, 0.08);
+  --rule-2:    rgba(255, 255, 255, 0.14);
+
+  /* Accents */
+  --amber:     #f5a623;   /* setpoint, in-range */
+  --amber-dim: rgba(245, 166, 35, 0.18);
+  --cyan:      #5dd0e0;   /* measured trace */
+  --cyan-dim:  rgba(93, 208, 224, 0.18);
+  --red:       #e64545;   /* excursion / fail */
+  --red-dim:   rgba(230, 69, 69, 0.18);
+  --green:     #4ade80;   /* pass */
+  --green-dim: rgba(74, 222, 128, 0.18);
+
+  /* Typography */
+  --display:   "IBM Plex Sans Condensed", "PP Neue Montreal", "Söhne Breit",
+               "Helvetica Neue", sans-serif;
+  --body:      "IBM Plex Sans", "Söhne", system-ui, sans-serif;
+  --mono:      "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Layout */
+  --max:       1320px;
+
+  color: var(--ink);
+  background: var(--bg);
+  font-family: var(--body);
+  font-feature-settings: "ss01", "ss02", "cv11", "tnum";
+  font-size: 14.5px;
   line-height: 1.5;
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
+  /* Subtle diagonal scan-line texture on the page; very low contrast.
+     Pure CSS, no images. */
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.012) 0px,
+      rgba(255, 255, 255, 0.012) 1px,
+      transparent 1px,
+      transparent 4px
+    );
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
-}
+a { color: inherit; text-decoration: none; }
+a:hover { color: var(--amber); }
 
-button,
-input,
-select {
+button, input, select {
   font: inherit;
+  color: inherit;
+}
+
+input, select {
+  background: var(--bg-elev);
+  border: 1px solid var(--rule-2);
+  color: var(--ink);
+  padding: 8px 10px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+input:focus, select:focus {
+  outline: none;
+  border-color: var(--amber);
+  box-shadow: 0 0 0 2px var(--amber-dim);
 }
 
 pre {
   white-space: pre-wrap;
   word-break: break-word;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+::selection { background: var(--amber); color: var(--bg); }
+
+/* Headings use the condensed display face */
+h1, h2, h3, h4 {
+  font-family: var(--display);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+  margin: 0 0 0.4em;
+}
+h1 { font-size: 2.4rem; line-height: 1.05; letter-spacing: -0.015em; }
+h2 { font-size: 1.25rem; line-height: 1.2; }
+h3 { font-size: 1rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-2); }
+
+p { margin: 0 0 0.85em; color: var(--ink-2); }
+
+/* Numeric / ID / timestamp values consistently mono.
+   Use `<span class="num">…</span>` or the .num utility on cells. */
+.num, code, kbd {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
