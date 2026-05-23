@@ -11,7 +11,10 @@ from sqlalchemy.orm import Session
 
 from auth import resolve_auth, require_org_access, create_api_key
 from compliance import soc2_readiness_checklist
-from database import RunRecord, MeasurementSeries, FileRecord, AuditLog, RunStatus
+from database import (
+    RunRecord, MeasurementSeries, FileRecord, AuditLog, RunStatus,
+    Campaign, Batch, TimeseriesData, OfflineSample,
+)
 from runs_service import get_or_create_run, rebuild_run_alignment, update_run_qc
 from transform import transform_run_to_asm
 
@@ -245,6 +248,219 @@ def issue_api_key(body: ApiKeyCreate, db: Session = Depends(get_db)):
 @router.get("/api/v1/compliance/soc2-readiness")
 def soc2_readiness():
     return soc2_readiness_checklist()
+
+
+# ---------------------------------------------------------------------------
+# Wet lab: campaigns / batches / timeseries / offline samples
+# ---------------------------------------------------------------------------
+
+class BatchOut(BaseModel):
+    id: str
+    campaign_id: str
+    batch_number: Optional[str]
+    bioreactor_model: Optional[str]
+    volume_liters: Optional[float]
+    cell_line: Optional[str]
+    media: Optional[str]
+    inoculation_date: Optional[str]
+    harvest_date: Optional[str]
+    status: str
+    extra_params: Optional[Dict[str, Any]]
+
+
+class CampaignOut(BaseModel):
+    id: str
+    org_id: str
+    name: str
+    description: Optional[str]
+    domain: str
+    extra_params: Optional[Dict[str, Any]]
+    created_at: Optional[str]
+    batch_count: int = 0
+
+
+class TimeseriesOut(BaseModel):
+    id: str
+    batch_id: str
+    parameter_name: str
+    unit: Optional[str]
+    timestamps: List[float]
+    values: List[float]
+    source_instrument: Optional[str]
+    inoculation_unix: Optional[float] = None
+
+
+class OfflineSampleOut(BaseModel):
+    id: str
+    batch_id: str
+    sample_time_hours: Optional[float]
+    sample_time_absolute: Optional[str]
+    measurement_name: str
+    value: Optional[float]
+    unit: Optional[str]
+    instrument: Optional[str]
+    qc_status: str
+
+
+def _iso(dt) -> Optional[str]:
+    return dt.isoformat() if dt is not None else None
+
+
+def _batch_to_out(b: Batch) -> BatchOut:
+    return BatchOut(
+        id=b.id,
+        campaign_id=b.campaign_id,
+        batch_number=b.batch_number,
+        bioreactor_model=b.bioreactor_model,
+        volume_liters=b.volume_liters,
+        cell_line=b.cell_line,
+        media=b.media,
+        inoculation_date=_iso(b.inoculation_date),
+        harvest_date=_iso(b.harvest_date),
+        status=b.status,
+        extra_params=b.extra_params,
+    )
+
+
+@router.get("/api/v1/campaigns", response_model=List[CampaignOut])
+def list_campaigns(
+    domain: Optional[str] = None,
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    org_id, _ = auth
+    q = db.query(Campaign).filter(Campaign.org_id == org_id)
+    if domain:
+        q = q.filter(Campaign.domain == domain)
+    rows = q.order_by(Campaign.created_at.desc()).all()
+    out: List[CampaignOut] = []
+    for c in rows:
+        bc = db.query(Batch).filter(Batch.campaign_id == c.id).count()
+        out.append(CampaignOut(
+            id=c.id, org_id=c.org_id, name=c.name, description=c.description,
+            domain=c.domain, extra_params=c.extra_params,
+            created_at=_iso(c.created_at), batch_count=bc,
+        ))
+    return out
+
+
+@router.get("/api/v1/campaigns/{campaign_id}", response_model=CampaignOut)
+def get_campaign(
+    campaign_id: str,
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    org_id, _ = auth
+    c = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+    if not c:
+        raise HTTPException(404, "Campaign not found")
+    require_org_access(org_id, c.org_id)
+    batch_count = db.query(Batch).filter(Batch.campaign_id == campaign_id).count()
+    return CampaignOut(
+        id=c.id, org_id=c.org_id, name=c.name, description=c.description,
+        domain=c.domain, extra_params=c.extra_params,
+        created_at=_iso(c.created_at), batch_count=batch_count,
+    )
+
+
+@router.get("/api/v1/campaigns/{campaign_id}/batches", response_model=List[BatchOut])
+def list_campaign_batches(
+    campaign_id: str,
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    org_id, _ = auth
+    c = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+    if not c:
+        raise HTTPException(404, "Campaign not found")
+    require_org_access(org_id, c.org_id)
+    rows = (
+        db.query(Batch)
+        .filter(Batch.campaign_id == campaign_id)
+        .order_by(Batch.batch_number)
+        .all()
+    )
+    return [_batch_to_out(b) for b in rows]
+
+
+@router.get("/api/v1/batches/{batch_id}", response_model=BatchOut)
+def get_batch(
+    batch_id: str,
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    org_id, _ = auth
+    b = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not b:
+        raise HTTPException(404, "Batch not found")
+    c = db.query(Campaign).filter(Campaign.id == b.campaign_id).first()
+    if c is not None:
+        require_org_access(org_id, c.org_id)
+    return _batch_to_out(b)
+
+
+@router.get("/api/v1/batches/{batch_id}/timeseries", response_model=List[TimeseriesOut])
+def list_batch_timeseries(
+    batch_id: str,
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    org_id, _ = auth
+    b = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not b:
+        raise HTTPException(404, "Batch not found")
+    c = db.query(Campaign).filter(Campaign.id == b.campaign_id).first()
+    if c is not None:
+        require_org_access(org_id, c.org_id)
+    inoculation_unix = b.inoculation_date.timestamp() if b.inoculation_date else None
+    rows = (
+        db.query(TimeseriesData)
+        .filter(TimeseriesData.batch_id == batch_id)
+        .order_by(TimeseriesData.parameter_name)
+        .all()
+    )
+    return [
+        TimeseriesOut(
+            id=r.id, batch_id=r.batch_id, parameter_name=r.parameter_name,
+            unit=r.unit, timestamps=list(r.timestamps or []),
+            values=list(r.values or []),
+            source_instrument=r.source_instrument,
+            inoculation_unix=inoculation_unix,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/api/v1/batches/{batch_id}/samples", response_model=List[OfflineSampleOut])
+def list_batch_samples(
+    batch_id: str,
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    org_id, _ = auth
+    b = db.query(Batch).filter(Batch.id == batch_id).first()
+    if not b:
+        raise HTTPException(404, "Batch not found")
+    c = db.query(Campaign).filter(Campaign.id == b.campaign_id).first()
+    if c is not None:
+        require_org_access(org_id, c.org_id)
+    rows = (
+        db.query(OfflineSample)
+        .filter(OfflineSample.batch_id == batch_id)
+        .order_by(OfflineSample.sample_time_hours, OfflineSample.measurement_name)
+        .all()
+    )
+    return [
+        OfflineSampleOut(
+            id=r.id, batch_id=r.batch_id,
+            sample_time_hours=r.sample_time_hours,
+            sample_time_absolute=_iso(r.sample_time_absolute),
+            measurement_name=r.measurement_name,
+            value=r.value, unit=r.unit, instrument=r.instrument,
+            qc_status=r.qc_status,
+        )
+        for r in rows
+    ]
 
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static", "dashboard")

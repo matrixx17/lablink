@@ -269,6 +269,85 @@ class Baseline(Base):
     )
 
 
+class Campaign(Base):
+    """
+    Standalone campaign table for grouping wet lab batches (and, optionally,
+    future cross-domain work). The `domain` column distinguishes wet lab
+    campaigns from comp-chem campaigns (which live in cc_campaigns on the
+    comp-chem branch).
+    """
+    __tablename__ = "campaigns"
+
+    id = Column(String(36), primary_key=True)
+    org_id = Column(String(128), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    domain = Column(String(20), nullable=False, default="compchem")
+    extra_params = Column(JSONB, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class Batch(Base):
+    __tablename__ = "batches"
+
+    id = Column(String(36), primary_key=True)
+    campaign_id = Column(String(36), nullable=False, index=True)
+    batch_number = Column(String(100), nullable=True)
+    bioreactor_model = Column(String(255), nullable=True)
+    volume_liters = Column(Float, nullable=True)
+    cell_line = Column(String(255), nullable=True)
+    media = Column(String(255), nullable=True)
+    inoculation_date = Column(DateTime(timezone=True), nullable=True)
+    harvest_date = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(50), nullable=False, default="active")
+    extra_params = Column(JSONB, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class TimeseriesData(Base):
+    __tablename__ = "timeseries_data"
+
+    id = Column(String(36), primary_key=True)
+    batch_id = Column(String(36), nullable=False, index=True)
+    parameter_name = Column(String(100), nullable=False)
+    unit = Column(String(50), nullable=True)
+    timestamps = Column(ARRAY(Float), nullable=True)
+    values = Column(ARRAY(Float), nullable=True)
+    source_instrument = Column(String(255), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
+class OfflineSample(Base):
+    __tablename__ = "offline_samples"
+
+    id = Column(String(36), primary_key=True)
+    batch_id = Column(String(36), nullable=False, index=True)
+    sample_time_hours = Column(Float, nullable=True)
+    sample_time_absolute = Column(DateTime(timezone=True), nullable=True)
+    measurement_name = Column(String(100), nullable=False)
+    value = Column(Float, nullable=True)
+    unit = Column(String(50), nullable=True)
+    instrument = Column(String(255), nullable=True)
+    qc_status = Column(String(20), nullable=False, default="pending")
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+
 def compute_record_hash(
     timestamp: datetime,
     org_id: str,
