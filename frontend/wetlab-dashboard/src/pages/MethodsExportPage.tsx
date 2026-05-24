@@ -15,11 +15,14 @@ import styles from "./pages.module.css";
 
 type MethodsResponse = {
   campaign_id: string;
+  campaign_name: string;
   generated_at: string;
+  domain?: string;
   paragraphs: Record<string, string>;
   full_text: string;
   missing_fields: string[];
-  instrument_summary: Record<string, unknown>;
+  software_versions: Record<string, string[]>;
+  run_counts: Record<string, number>;
 };
 
 function safeFilename(s: string) {
@@ -83,15 +86,23 @@ export default function MethodsExportPage() {
 
   const orderedParagraphs: Array<[string, string]> = [
     ["Bioreactor", methods.paragraphs.bioreactor || ""],
-    ["Offline analytics", methods.paragraphs.offline || ""],
+    ["Cell analysis", methods.paragraphs.cell_analysis || ""],
+    ["Titer", methods.paragraphs.titer || ""],
+    ["Metabolites", methods.paragraphs.metabolites || ""],
     ["Chromatography", methods.paragraphs.chromatography || ""],
   ];
+  const equipmentRows = Object.entries(methods.software_versions || {});
 
   return (
     <div className={styles.grid}>
       <HeroHeader
         eyebrow="Methods export"
-        title={`${campaignName || "Campaign"} — methods.`}
+        title={
+          <span className={styles.methodsTitleRow}>
+            <span>{campaignName || "Campaign"} — methods.</span>
+            <span className={`${styles.domainBadge} ${styles.domainBadgeWetlab}`}>WET LAB</span>
+          </span>
+        }
         context={
           <p>
             Publication-ready methods, auto-generated from this campaign's
@@ -133,11 +144,10 @@ export default function MethodsExportPage() {
           </section>
         ))}
 
-      {methods.instrument_summary &&
-      Object.keys(methods.instrument_summary).length > 0 ? (
+      {equipmentRows.length > 0 ? (
         <>
-          <SectionRule eyebrow="Instruments" title="Recorded equipment" />
-          <pre>{JSON.stringify(methods.instrument_summary, null, 2)}</pre>
+          <SectionRule eyebrow="Instruments" title="Instruments and equipment" />
+          <pre>{JSON.stringify(methods.software_versions, null, 2)}</pre>
         </>
       ) : null}
 

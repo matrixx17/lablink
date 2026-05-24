@@ -58,12 +58,21 @@ export default function MethodsExportPage() {
   if (!methods) return <EmptyState>Loading generated methods...</EmptyState>;
 
   const softwareRows = Object.entries(methods.software_versions || {});
+  const isWetlab = methods.domain === "wetlab";
+  const domainLabel = isWetlab ? "WET LAB" : "COMPUTATIONAL";
 
   return (
     <div className={`${styles.grid} ${styles.reveal}`}>
       <HeroHeader
         eyebrow={methods.campaign_name}
-        title="Auto-generated methods section"
+        title={
+          <span className={styles.methodsTitleRow}>
+            <span>Auto-generated methods section</span>
+            <span className={`${styles.domainBadge} ${isWetlab ? styles.domainBadgeWetlab : styles.domainBadgeCompchem}`}>
+              {domainLabel}
+            </span>
+          </span>
+        }
         context={<p className={styles.methodsSubtitle}>Ready to paste into your manuscript or IND filing</p>}
         actions={<SecondaryButton as="a" href={withOrg(`/campaigns/${id}`, orgId)}>Back to campaign</SecondaryButton>}
       />
@@ -105,14 +114,16 @@ export default function MethodsExportPage() {
       ) : null}
 
       <Card>
-        <SectionRule title="Software versions used" />
-        {softwareRows.length === 0 ? <EmptyState>No software versions recorded.</EmptyState> : (
+        <SectionRule title={isWetlab ? "Instruments and equipment" : "Software versions used"} />
+        {softwareRows.length === 0 ? (
+          <EmptyState>{isWetlab ? "No instruments or equipment recorded." : "No software versions recorded."}</EmptyState>
+        ) : (
           <div className={styles.tableWrap}>
             <table className={styles.table}>
               <thead>
                 <tr>
-                  <th>Software</th>
-                  <th>Versions Detected</th>
+                  <th>{isWetlab ? "Instrument / Equipment" : "Software"}</th>
+                  <th>{isWetlab ? "Values Detected" : "Versions Detected"}</th>
                 </tr>
               </thead>
               <tbody>

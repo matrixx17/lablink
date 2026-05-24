@@ -8,6 +8,7 @@ export type Campaign = {
   name: string;
   description?: string | null;
   campaign_type: string;
+  domain?: string | null;
   status: string;
   metadata?: Record<string, unknown> | null;
   target_metric?: string | null;
@@ -17,6 +18,7 @@ export type Campaign = {
   completed_at?: string | null;
   run_count: number;
   molecule_count: number;
+  has_cro_delivery?: boolean;
 };
 
 export type OrgInfo = {
@@ -174,6 +176,7 @@ export type AuditEvent = {
   entity_id?: string;
   actor?: string;
   details?: Record<string, unknown> | null;
+  extra_data?: Record<string, unknown> | null;
   previous_hash?: string | null;
   record_hash?: string;
 };
@@ -186,10 +189,23 @@ export type VerifyResult = {
   errors?: Array<Record<string, unknown>>;
 };
 
+export type DeliveryVerification = {
+  has_delivery: boolean;
+  delivered_by?: string | null;
+  delivered_at?: string | null;
+  files_checked: number;
+  files_verified: number;
+  files_modified: number;
+  verification_status: "verified" | "modified" | "partial" | "unavailable" | string;
+  demo_mode: boolean;
+  modified_files?: string[];
+};
+
 export type MethodsExport = {
   campaign_id: string;
   campaign_name: string;
   generated_at: string;
+  domain?: "compchem" | "wetlab" | string;
   missing_fields: string[];
   paragraphs: Record<string, string>;
   full_text: string;
@@ -246,6 +262,8 @@ export const api = {
     request<RunDetail>(`/api/v1/runs/${id}?${orgParam(orgId)}`),
   audit: (campaignId: string | number, orgId: string) =>
     request<AuditEvent[]>(`/api/v1/campaigns/${campaignId}/audit?${orgParam(orgId)}&limit=1000`),
+  verifyDelivery: (campaignId: string | number, orgId: string) =>
+    request<DeliveryVerification>(`/api/v1/campaigns/${campaignId}/verify-delivery?${orgParam(orgId)}`),
   verifyAudit: (campaignId: string | number, orgId: string) =>
     request<VerifyResult>(`/api/v1/audit/verify/${campaignId}?${orgParam(orgId)}`, { method: "POST" }),
   artifactDownload: (kind: "input" | "output", id: number, orgId: string) =>

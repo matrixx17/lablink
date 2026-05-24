@@ -36,6 +36,7 @@ from .bioprocess_platform import (
 )
 from .wetlab import (
     AktaCsvParser,
+    AssayTableParser,
     GenericBioprocessCsvParser,
     GenericOfflineSampleCsvParser,
 )
@@ -57,6 +58,8 @@ _PARSER_REGISTRY: List[Type[BaseParser]] = [
     # Wet-lab canonical-name fallbacks — match before GenericCSVParser
     GenericOfflineSampleCsvParser,
     GenericBioprocessCsvParser,
+    # Generic assay fallback — only fires when assay signatures are present
+    AssayTableParser,
     GenericCSVParser,
 ]
 

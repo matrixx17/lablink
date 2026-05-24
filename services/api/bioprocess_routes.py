@@ -3,7 +3,7 @@
 import hmac
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -14,7 +14,8 @@ from auth import resolve_auth, require_org_access, create_api_key
 from compliance import soc2_readiness_checklist
 from database import (
     RunRecord, MeasurementSeries, FileRecord, AuditLog, RunStatus,
-    Campaign, Batch, TimeseriesData, OfflineSample,
+    AuditAction, Campaign, CampaignApproval, Batch, EntityType,
+    TimeseriesData, OfflineSample, User, log_audit,
 )
 from evidence_book_wetlab import build_evidence_book, build_batch_record, EvidenceBookTooLarge
 from runs_service import get_or_create_run, rebuild_run_alignment, update_run_qc
@@ -280,6 +281,21 @@ class BatchOut(BaseModel):
     summary_metrics: Optional[BatchSummaryMetrics] = None
 
 
+class ApprovalCreate(BaseModel):
+    approval_meaning: Literal["author", "reviewer", "approver"]
+    comments: Optional[str] = None
+
+
+class ApprovalRead(BaseModel):
+    id: str
+    campaign_id: str
+    approved_by_user_id: str
+    approved_by_name: str
+    approval_meaning: Literal["author", "reviewer", "approver"]
+    comments: Optional[str] = None
+    created_at: str
+
+
 class CampaignOut(BaseModel):
     id: str
     org_id: str
@@ -289,6 +305,9 @@ class CampaignOut(BaseModel):
     extra_params: Optional[Dict[str, Any]]
     created_at: Optional[str]
     batch_count: int = 0
+    approvals: List[ApprovalRead] = Field(default_factory=list)
+    is_approved: bool = False
+    approval_count: int = 0
 
 
 class TimeseriesOut(BaseModel):
@@ -317,6 +336,72 @@ class OfflineSampleOut(BaseModel):
 
 def _iso(dt) -> Optional[str]:
     return dt.isoformat() if dt is not None else None
+
+
+def _approval_to_read(a: CampaignApproval) -> ApprovalRead:
+    return ApprovalRead(
+        id=a.id,
+        campaign_id=a.campaign_id,
+        approved_by_user_id=a.approved_by_user_id,
+        approved_by_name=a.approved_by_name,
+        approval_meaning=a.approval_meaning,
+        comments=a.comments,
+        created_at=_iso(a.created_at) or "",
+    )
+
+
+def _campaign_approvals(db: Session, campaign_id: str) -> List[CampaignApproval]:
+    return (
+        db.query(CampaignApproval)
+        .filter(CampaignApproval.campaign_id == campaign_id)
+        .order_by(CampaignApproval.created_at.asc(), CampaignApproval.id.asc())
+        .all()
+    )
+
+
+def _campaign_to_out(db: Session, c: Campaign) -> CampaignOut:
+    batch_count = db.query(Batch).filter(Batch.campaign_id == c.id).count()
+    approvals = [_approval_to_read(a) for a in _campaign_approvals(db, c.id)]
+    return CampaignOut(
+        id=c.id,
+        org_id=c.org_id,
+        name=c.name,
+        description=c.description,
+        domain=c.domain,
+        extra_params=c.extra_params,
+        created_at=_iso(c.created_at),
+        batch_count=batch_count,
+        approvals=approvals,
+        is_approved=bool(approvals),
+        approval_count=len(approvals),
+    )
+
+
+def _actor_name(actor: str) -> str:
+    if actor.startswith("api-key:"):
+        return actor.split(":", 1)[1] or actor
+    return actor or "anonymous-dev"
+
+
+def _resolve_approval_user(db: Session, org_id: str, actor: str) -> User:
+    name = _actor_name(actor)
+    email = name if "@" in name else None
+    username = None if email else name
+    query = db.query(User).filter(User.org_id == org_id)
+    if email:
+        user = query.filter(User.email == email).first()
+    else:
+        user = query.filter(User.username == username).first()
+    if user:
+        if not user.name:
+            user.name = name
+            db.commit()
+        return user
+    user = User(org_id=org_id, email=email, username=username, name=name)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
 
 
 def _batch_to_out(b: Batch) -> BatchOut:
@@ -348,12 +433,7 @@ def list_campaigns(
     rows = q.order_by(Campaign.created_at.desc()).all()
     out: List[CampaignOut] = []
     for c in rows:
-        bc = db.query(Batch).filter(Batch.campaign_id == c.id).count()
-        out.append(CampaignOut(
-            id=c.id, org_id=c.org_id, name=c.name, description=c.description,
-            domain=c.domain, extra_params=c.extra_params,
-            created_at=_iso(c.created_at), batch_count=bc,
-        ))
+        out.append(_campaign_to_out(db, c))
     return out
 
 
@@ -368,12 +448,70 @@ def get_campaign(
     if not c:
         raise HTTPException(404, "Campaign not found")
     require_org_access(org_id, c.org_id)
-    batch_count = db.query(Batch).filter(Batch.campaign_id == campaign_id).count()
-    return CampaignOut(
-        id=c.id, org_id=c.org_id, name=c.name, description=c.description,
-        domain=c.domain, extra_params=c.extra_params,
-        created_at=_iso(c.created_at), batch_count=batch_count,
+    return _campaign_to_out(db, c)
+
+
+@router.post("/api/v1/campaigns/{campaign_id}/approve", response_model=ApprovalRead)
+def approve_campaign(
+    campaign_id: str,
+    body: ApprovalCreate,
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    org_id, actor = auth
+    c = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+    if not c:
+        raise HTTPException(404, "Campaign not found")
+    require_org_access(org_id, c.org_id)
+
+    user = _resolve_approval_user(db, c.org_id, actor)
+    approval = CampaignApproval(
+        campaign_id=c.id,
+        approved_by_user_id=user.id,
+        approved_by_name=user.name,
+        approval_meaning=body.approval_meaning,
+        comments=body.comments,
     )
+    db.add(approval)
+    db.commit()
+    db.refresh(approval)
+
+    message = f"{user.name} approved as {body.approval_meaning}."
+    if body.comments:
+        message = f"{message} {body.comments}"
+    log_audit(
+        action=AuditAction.CAMPAIGN_APPROVED,
+        entity_type=EntityType.CAMPAIGN,
+        entity_id=c.id,
+        actor=user.email or user.username or actor,
+        org_id=c.org_id,
+        details={
+            "event": "campaign_approved",
+            "message": message,
+            "campaign_id": c.id,
+            "approval_id": approval.id,
+            "approval_meaning": body.approval_meaning,
+            "comments": body.comments,
+            "approved_by_name": user.name,
+            "approved_by_user_id": user.id,
+        },
+        db=db,
+    )
+    return _approval_to_read(approval)
+
+
+@router.get("/api/v1/campaigns/{campaign_id}/approvals", response_model=List[ApprovalRead])
+def list_campaign_approvals(
+    campaign_id: str,
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    org_id, _ = auth
+    c = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+    if not c:
+        raise HTTPException(404, "Campaign not found")
+    require_org_access(org_id, c.org_id)
+    return [_approval_to_read(a) for a in _campaign_approvals(db, campaign_id)]
 
 
 @router.get("/api/v1/campaigns/{campaign_id}/methods")
@@ -616,8 +754,8 @@ def export_campaign_evidence_book(
     """
     Bundle the wet lab campaign as a downloadable ZIP.
 
-    format=evidence-book (default): VDR-style Evidence Book.
-    format=batch-record: pharmaceutical Batch Manufacturing Record (wet lab only).
+    Wet lab campaigns export the pharmaceutical Batch Manufacturing Record
+    bundle from this existing Evidence Book URL.
     """
     org_id, _ = auth
     c = db.query(Campaign).filter(Campaign.id == campaign_id).first()
@@ -636,9 +774,10 @@ def export_campaign_evidence_book(
         )
 
     try:
-        if fmt == "batch-record":
+        if c.domain == "wetlab":
             zip_bytes, zip_sha256 = build_batch_record(db, c, c.org_id)
             prefix = "BatchRecord"
+            fmt = "batch-record"
         else:
             zip_bytes, zip_sha256 = build_evidence_book(db, c, c.org_id)
             prefix = "EvidenceBook"

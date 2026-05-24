@@ -498,6 +498,27 @@ def ingest_run_manifest(
         ))
     db.commit()
 
+    if manifest.get("s3_key") or manifest.get("file_hash"):
+        log_cc_audit(
+            action=AuditEventAction.FILE_RECEIVED,
+            entity_type="file",
+            entity_id=str(manifest.get("s3_key") or manifest.get("filename") or run.id),
+            actor=actor,
+            org_id=org_id,
+            details={
+                "campaign_id": campaign.id,
+                "run_id": run.id,
+                "filename": manifest.get("filename"),
+                "artifact_role": artifact_role,
+            },
+            extra_data={
+                "s3_key": manifest.get("s3_key"),
+                "original_hash": manifest.get("file_hash"),
+                "filename": manifest.get("filename"),
+            },
+            db=db,
+        )
+
     # --- Metrics + AssayResults -----------------------------------------
     metrics = parsed.get("metrics") or []
     metric_rows: List[RunMetric] = []

@@ -5,6 +5,7 @@ import {
   AuditEvent,
   Campaign,
   CampaignRun,
+  DeliveryVerification,
   MoleculeListItem,
   MoleculeDetail,
 } from "../api/client";
@@ -24,6 +25,7 @@ import {
   StatusBadge,
 } from "../components/ui";
 import { downloadBcoExport } from "../lib/bcoExport";
+import { downloadEvidenceBook } from "../lib/evidenceBook";
 import styles from "./pages.module.css";
 
 const statusClass: Record<string, string> = {
@@ -84,8 +86,12 @@ export default function CampaignDetailPage() {
   const [molecules, setMolecules] = useState<MoleculeListItem[]>([]);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [lead, setLead] = useState<MoleculeDetail | null>(null);
+  const [deliveryVerification, setDeliveryVerification] = useState<DeliveryVerification | null>(null);
+  const [verifyingDelivery, setVerifyingDelivery] = useState(false);
   const [status, setStatus] = useState("");
   const [exportingBco, setExportingBco] = useState(false);
+  const [exportingEvidenceBook, setExportingEvidenceBook] = useState(false);
+  const [toast, setToast] = useState("");
   const [error, setError] = useState<unknown>(null);
 
   useEffect(() => {
@@ -100,6 +106,16 @@ export default function CampaignDetailPage() {
         setRuns(r);
         setMolecules(m);
         setAudit(a);
+        if (c.has_cro_delivery) {
+          setVerifyingDelivery(true);
+          api
+            .verifyDelivery(id, orgId)
+            .then(setDeliveryVerification)
+            .catch(setError)
+            .finally(() => setVerifyingDelivery(false));
+        } else {
+          setDeliveryVerification(null);
+        }
         if (c.lead_molecule_id) {
           api
             .molecule(c.lead_molecule_id, orgId)
@@ -134,10 +150,37 @@ export default function CampaignDetailPage() {
     setExportingBco(true);
     try {
       await downloadBcoExport(id, orgId);
+      setToast("BCO exported — IEEE 2791-2020 compliant");
+      window.setTimeout(() => setToast(""), 3500);
     } catch (err) {
       setError(err);
     } finally {
       setExportingBco(false);
+    }
+  };
+
+  const exportEvidenceBook = async () => {
+    if (!campaign) return;
+    setExportingEvidenceBook(true);
+    try {
+      const result = await downloadEvidenceBook(id, orgId);
+      setToast(`Evidence Book exported — ${result.fileCount} files, ${campaign.name}`);
+      window.setTimeout(() => setToast(""), 3500);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setExportingEvidenceBook(false);
+    }
+  };
+
+  const reverifyDelivery = async () => {
+    setVerifyingDelivery(true);
+    try {
+      setDeliveryVerification(await api.verifyDelivery(id, orgId));
+    } catch (err) {
+      setError(err);
+    } finally {
+      setVerifyingDelivery(false);
     }
   };
 
@@ -174,9 +217,15 @@ export default function CampaignDetailPage() {
 
   if (error) return <ErrorBox error={error} />;
   if (!campaign) return <div className={styles.centerMessage}>Loading campaign…</div>;
+  const showBcoExport = !campaign.domain || campaign.domain === "compchem";
 
   return (
     <div className={styles.grid}>
+      {toast ? (
+        <div className={styles.toast} role="status" aria-live="polite">
+          {toast}
+        </div>
+      ) : null}
       <HeroHeader
         eyebrow={campaign.project_name}
         title={campaign.name}
@@ -213,8 +262,17 @@ export default function CampaignDetailPage() {
             >
               Export CSV
             </PrimaryButton>
-            <SecondaryButton onClick={exportBco} disabled={exportingBco} loading={exportingBco}>
-              Export BCO
+            {showBcoExport ? (
+              <SecondaryButton onClick={exportBco} disabled={exportingBco} loading={exportingBco}>
+                Export BCO
+              </SecondaryButton>
+            ) : null}
+            <SecondaryButton
+              onClick={exportEvidenceBook}
+              disabled={exportingEvidenceBook}
+              loading={exportingEvidenceBook}
+            >
+              Export Evidence Book
             </SecondaryButton>
             <SecondaryButton as="a" href={withOrg(`/campaigns/${id}/audit`, orgId)}>
               Audit trail
@@ -228,6 +286,60 @@ export default function CampaignDetailPage() {
           </ActionBar>
         }
       />
+
+      {campaign.has_cro_delivery ? (
+        <section className={styles.deliveryVerificationCard}>
+          <div className={styles.deliveryVerificationIcon} aria-hidden>
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M12 3 5 6v5c0 4.4 2.8 8.4 7 10 4.2-1.6 7-5.6 7-10V6l-7-3Z" />
+            </svg>
+          </div>
+          <div className={styles.deliveryVerificationBody}>
+            <div className={styles.deliveryVerificationHeader}>
+              <div>
+                <p className={styles.leadEyebrow}>Delivery Verification</p>
+                <h2>CRO Delivery</h2>
+                <p className={styles.deliveryVerificationSubtitle}>
+                  Delivered by{" "}
+                  <strong>{deliveryVerification?.delivered_by || deliveredBy || "CRO uploader"}</strong>
+                  {deliveryVerification?.delivered_at || deliveryDate ? (
+                    <>
+                      {" "}on{" "}
+                      <strong>{dateOnly(deliveryVerification?.delivered_at || deliveryDate)}</strong>
+                    </>
+                  ) : null}
+                </p>
+              </div>
+              <StatusBadge status={deliveryVerification?.verification_status || "unavailable"} />
+            </div>
+            <div className={styles.deliveryVerificationMeta}>
+              <span>{deliveryVerification?.files_verified ?? 0} verified</span>
+              <span>{deliveryVerification?.files_checked ?? 0} files checked</span>
+              <span>{deliveryVerification?.files_modified ?? 0} modified</span>
+            </div>
+            {deliveryVerification?.demo_mode ? (
+              <p className={styles.deliveryDemoNote}>
+                Demo mode: object storage is unavailable, so verification is simulated from stored delivery hashes.
+              </p>
+            ) : null}
+            {deliveryVerification?.modified_files?.length ? (
+              <details className={styles.modifiedFiles}>
+                <summary>Show modified filenames</summary>
+                <ul>
+                  {deliveryVerification.modified_files.map((filename) => (
+                    <li key={filename}>{filename}</li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </div>
+          <div className={styles.deliveryVerificationActions}>
+            <SecondaryButton onClick={reverifyDelivery} disabled={verifyingDelivery} loading={verifyingDelivery}>
+              Re-verify now
+            </SecondaryButton>
+          </div>
+        </section>
+      ) : null}
 
       <KpiStrip
         items={[

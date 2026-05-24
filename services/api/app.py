@@ -483,6 +483,10 @@ def process_manifest(m: Manifest, return_transformed: bool = False) -> Optional[
                     batch_id=m.batch_id, campaign_id=m.campaign_id,
                     bioreactor_id=m.bioreactor_id,
                 )
+            if run and parsed_meta.get("assay_format"):
+                run_meta = dict(run.run_metadata or {})
+                run_meta["assay_format"] = parsed_meta["assay_format"]
+                run.run_metadata = run_meta
 
             # Step 3: Run QC (non-critical - use pass status on failure)
             try:
@@ -491,6 +495,7 @@ def process_manifest(m: Manifest, return_transformed: bool = False) -> Optional[
                     org_id=m.org_id,
                     instrument=instrument,
                     db=db,
+                    parsed_metadata=parsed_meta,
                 )
                 logger.info(f"QC complete for {m.filename}: {qc.get('overall_status', 'unknown')}")
             except Exception as e:
@@ -537,7 +542,7 @@ def process_manifest(m: Manifest, return_transformed: bool = False) -> Optional[
                         time_column=m.time_column,
                     )
                     rebuild_run_alignment(db, run.id)
-                    update_run_qc(db, run.id, m.org_id, m.instrument)
+                    update_run_qc(db, run.id, m.org_id, m.instrument, parsed_metadata=parsed_meta)
             except SQLAlchemyError as e:
                 logger.error(f"Database error creating file record: {e}", extra={
                     "source_filename": m.filename,

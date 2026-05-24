@@ -143,6 +143,7 @@ class AuditEventAction(PyEnum):
     MOLECULE_UPDATED = "molecule_updated"
     METRIC_RECORDED = "metric_recorded"
     ASSAY_RESULT_LINKED = "assay_result_linked"
+    FILE_RECEIVED = "file_received"
     FILE_UPLOADED = "file_uploaded"
     FILE_ACCESSED = "file_accessed"
     CONFIG_CHANGED = "config_changed"
@@ -625,6 +626,7 @@ class AuditEvent(Base):
     entity_id = Column(String(512), nullable=False)
     actor = Column(String(256), nullable=False)                # user ID or "api", "system"
     details = Column(JSONB, nullable=True)
+    extra_data = Column(JSONB, nullable=True)
     previous_hash = Column(String(64), nullable=True)
     record_hash = Column(String(64), nullable=False)
 
@@ -692,6 +694,7 @@ def log_cc_audit(
     org_id: str,
     details: Optional[Dict[str, Any]],
     db: Session,
+    extra_data: Optional[Dict[str, Any]] = None,
 ) -> AuditEvent:
     previous_record = (
         db.query(AuditEvent)
@@ -721,6 +724,7 @@ def log_cc_audit(
         entity_id=entity_id,
         actor=actor,
         details=details,
+        extra_data=extra_data,
         previous_hash=previous_hash,
         record_hash=record_hash,
     )

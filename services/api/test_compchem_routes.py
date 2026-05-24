@@ -50,19 +50,28 @@ database.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_te
 
 # Now safe to import the rest
 import compchem_models  # noqa: E402,F401  (registers tables on Base)
-from database import Base, ApiKey  # noqa: E402
+from database import (  # noqa: E402
+    ApiKey,
+    AuditLog,
+    Base,
+    Batch as WetlabBatch,
+    Campaign as WetlabCampaign,
+    OfflineSample as WetlabOfflineSample,
+    TimeseriesData as WetlabTimeseriesData,
+)
 
 # Patch JSONB → JSON for SQLite compatibility.
 # Two-step: (1) register a SQLite type compiler that renders JSONB as JSON,
 # (2) ensure column instances bind their bind/result processors via the JSON
 # implementation when running against SQLite.
-from sqlalchemy.dialects.postgresql import JSONB  # noqa: E402
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB  # noqa: E402
 from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler  # noqa: E402
 
 def _visit_JSONB(self, type_, **kw):  # type: ignore[no-untyped-def]
     return "JSON"
 
 SQLiteTypeCompiler.visit_JSONB = _visit_JSONB  # type: ignore[attr-defined]
+SQLiteTypeCompiler.visit_ARRAY = lambda self, type_, **kw: "JSON"  # type: ignore[attr-defined]
 
 # JSONB's bind/result processors call json.dumps/loads, which works fine on
 # SQLite columns typed as JSON, so we don't need to intercept those.
@@ -77,13 +86,15 @@ from compchem_models import (  # noqa: E402
 )
 _cc_tables = [
     t.__table__ for t in (
-        ApiKey, Organization, OrgCredential, OrgUser, Project, Campaign, DockingGrid, Molecule, Run, RunInput, RunOutput,
+        ApiKey, AuditLog, WetlabCampaign, WetlabBatch, WetlabOfflineSample, WetlabTimeseriesData,
+        Organization, OrgCredential, OrgUser, Project, Campaign, DockingGrid, Molecule, Run, RunInput, RunOutput,
         RunMetric, RunLineage, MoleculeProperty, AssayResult, AuditEvent,
     )
 ]
 Base.metadata.create_all(bind=_test_engine, tables=_cc_tables)
 
 from fastapi.testclient import TestClient  # noqa: E402
+import compchem_routes  # noqa: E402
 from compchem_routes import router as compchem_router  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 
@@ -151,6 +162,7 @@ def test_get_campaign_includes_counts():
     body = r.json()
     assert body["id"] == _CAMPAIGN_ID
     assert body["run_count"] == 0
+    assert body["has_cro_delivery"] is False
 
 
 def test_get_campaign_404_for_unknown():
@@ -189,7 +201,7 @@ def test_demo_login_and_reset_seed_demo_org():
     assert campaign["run_count"] == 16
     assert "Bio Labs" in campaign["description"]
 
-    db = database.SessionLocal()
+    db = compchem_routes.SessionLocal()
     from compchem_models import AuditEvent, Campaign, Molecule, Run
     demo_campaign = db.query(Campaign).filter(Campaign.org_id == "demo-therapeutics").first()
     assert demo_campaign is not None
@@ -486,6 +498,7 @@ def test_campaign_methods_json_and_text():
     body = r.json()
     assert body["campaign_id"] == str(_CAMPAIGN_ID)
     assert body["campaign_name"] == "lead_opt_round_3"
+    assert body["domain"] == "compchem"
     assert "docking" in body["paragraphs"]
     assert "Molecular docking was performed using AutoDock Vina 1.2.5" in body["full_text"]
     assert "(10, 11, 12) Å" in body["full_text"]
@@ -501,6 +514,130 @@ def test_campaign_methods_json_and_text():
     assert r.status_code == 200, r.text
     assert "text/plain" in r.headers.get("content-type", "")
     assert "Molecular docking was performed" in r.text
+
+
+def test_campaign_methods_delegates_wetlab_campaigns():
+    from datetime import datetime, timedelta, timezone
+
+    db = compchem_routes.SessionLocal()
+    wetlab_id = "wetlab-methods-route"
+    batch_id = "wetlab-methods-batch"
+    inoculation = datetime(2024, 3, 1, tzinfo=timezone.utc)
+    db.query(WetlabOfflineSample).filter(WetlabOfflineSample.batch_id == batch_id).delete()
+    db.query(WetlabBatch).filter(WetlabBatch.id == batch_id).delete()
+    db.query(WetlabCampaign).filter(WetlabCampaign.id == wetlab_id).delete()
+    db.add(WetlabCampaign(
+        id=wetlab_id,
+        org_id=ORG,
+        name="Wetlab Methods",
+        domain="wetlab",
+        extra_params={},
+    ))
+    db.add(WetlabBatch(
+        id=batch_id,
+        campaign_id=wetlab_id,
+        batch_number="B-001",
+        bioreactor_model="Sartorius BIOSTAT B-DCU",
+        volume_liters=2.0,
+        cell_line="CHO-K1",
+        media="ActiPro",
+        inoculation_date=inoculation,
+        harvest_date=inoculation + timedelta(days=14),
+        status="harvested",
+        extra_params={
+            "ph_setpoint": 7.0,
+            "do_setpoint_percent": 40.0,
+            "temperature_setpoint_c": 37.0,
+            "feed_threshold_g_per_l": 2.0,
+        },
+    ))
+    db.add(WetlabOfflineSample(
+        id="wetlab-methods-vcd",
+        batch_id=batch_id,
+        sample_time_hours=24.0,
+        sample_time_absolute=inoculation + timedelta(hours=24),
+        measurement_name="viable_cell_density_e6_per_ml",
+        value=4.0,
+        unit="1e6 cells/mL",
+        instrument="Beckman Vi-CELL XR",
+        qc_status="pass",
+    ))
+    db.commit()
+    db.close()
+
+    r = client.get(f"/api/v1/campaigns/{wetlab_id}/methods", params={"org_id": ORG})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["domain"] == "wetlab"
+    assert body["campaign_id"] == wetlab_id
+    assert "bioreactor" in body["paragraphs"]
+    assert "cell_analysis" in body["paragraphs"]
+    assert body["software_versions"]["Bioreactor"] == ["Sartorius BIOSTAT B-DCU"]
+    assert body["run_counts"]["batches"] == 1
+
+
+def test_evidence_book_route_delegates_wetlab_campaigns():
+    import io as _io
+    import json as _json
+    import zipfile as _zip
+    from datetime import datetime, timedelta, timezone
+
+    from compchem_routes import SessionLocal as route_session_local
+
+    db = route_session_local()
+    wetlab_id = "wetlab-evidence-route"
+    batch_id = "wetlab-evidence-batch"
+    inoculation = datetime(2024, 3, 1, tzinfo=timezone.utc)
+    db.query(WetlabOfflineSample).filter(WetlabOfflineSample.batch_id == batch_id).delete()
+    db.query(WetlabBatch).filter(WetlabBatch.id == batch_id).delete()
+    db.query(WetlabCampaign).filter(WetlabCampaign.id == wetlab_id).delete()
+    db.add(WetlabCampaign(
+        id=wetlab_id,
+        org_id=ORG,
+        name="Wetlab Evidence",
+        domain="wetlab",
+        extra_params={"target": "mAb"},
+    ))
+    db.add(WetlabBatch(
+        id=batch_id,
+        campaign_id=wetlab_id,
+        batch_number="B-EV-001",
+        bioreactor_model="Sartorius BIOSTAT",
+        volume_liters=2.0,
+        cell_line="CHO-K1",
+        media="ActiPro",
+        inoculation_date=inoculation,
+        harvest_date=inoculation + timedelta(days=14),
+        status="harvested",
+        extra_params={"lead_condition": True, "qc_status": "pass"},
+    ))
+    db.add(WetlabOfflineSample(
+        id="wetlab-evidence-titer",
+        batch_id=batch_id,
+        sample_time_hours=336.0,
+        sample_time_absolute=inoculation + timedelta(hours=336),
+        measurement_name="titer_mg_per_l",
+        value=1800.0,
+        unit="mg/L",
+        instrument="Octet BLI",
+        qc_status="pass",
+    ))
+    db.commit()
+    db.close()
+
+    r = client.get(f"/api/v1/campaigns/{wetlab_id}/export/evidence-book", params={"org_id": ORG})
+    assert r.status_code == 200, r.text
+    assert r.headers["x-export-format"] == "batch-record"
+    zf = _zip.ZipFile(_io.BytesIO(r.content))
+    names = set(zf.namelist())
+    assert "batch_record.pdf" in names
+    assert "batch_comparison.csv" in names
+    assert "campaign_bco.json" not in names
+    verification = _json.loads(zf.read("verification.json"))
+    assert verification["export_type"] == "batch-record"
+    assert verification["campaign_id"] == wetlab_id
+    assert verification["approvals"] == []
+    assert verification["is_approved"] is False
 
 
 def test_campaign_config_template_download():
@@ -535,6 +672,68 @@ def test_export_campaign_unknown_format_400():
         params={"org_id": ORG, "format": "xml"},
     )
     assert r.status_code == 400
+
+
+def test_verify_delivery_checks_s3_hashes(monkeypatch):
+    import hashlib
+    import io
+
+    db = database.SessionLocal()
+    from compchem_models import AuditEventAction, log_cc_audit
+
+    content = b"delivered docking payload"
+    original_hash = hashlib.sha256(content).hexdigest()
+    actor = "cro-delivery-test"
+    log_cc_audit(
+        action=AuditEventAction.FILE_RECEIVED,
+        entity_type="file",
+        entity_id="deliveries/round3/dock.log",
+        actor=actor,
+        org_id=ORG,
+        details={"campaign_id": _CAMPAIGN_ID, "filename": "dock.log"},
+        extra_data={
+            "s3_key": "deliveries/round3/dock.log",
+            "original_hash": original_hash,
+            "filename": "dock.log",
+        },
+        db=db,
+    )
+    log_cc_audit(
+        action=AuditEventAction.CRO_DELIVERY,
+        entity_type="campaign",
+        entity_id=str(_CAMPAIGN_ID),
+        actor=actor,
+        org_id=ORG,
+        details={"event": "cro_delivery", "campaign_id": _CAMPAIGN_ID},
+        db=db,
+    )
+    db.close()
+
+    class FakeS3:
+        def get_object(self, Bucket, Key):  # noqa: N803
+            assert Bucket
+            assert Key == "deliveries/round3/dock.log"
+            return {"Body": io.BytesIO(content)}
+
+    monkeypatch.setattr("compchem_routes.s3", FakeS3())
+
+    r = client.get(
+        f"/api/v1/campaigns/{_CAMPAIGN_ID}/verify-delivery",
+        params={"org_id": ORG},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["has_delivery"] is True
+    assert body["delivered_by"] == actor
+    assert body["files_checked"] == 1
+    assert body["files_verified"] == 1
+    assert body["files_modified"] == 0
+    assert body["verification_status"] == "verified"
+    assert body["demo_mode"] is False
+
+    r = client.get(f"/api/v1/campaigns/{_CAMPAIGN_ID}", params={"org_id": ORG})
+    assert r.status_code == 200, r.text
+    assert r.json()["has_cro_delivery"] is True
 
 
 def test_verify_audit_chain_returns_pass():
@@ -596,12 +795,28 @@ def test_export_bco_has_required_domains_and_valid_etag():
     """
     Validate the IEEE 2791-2020 BCO export:
       - HTTP 200 + application/json
-      - all 10 required top-level fields present
+      - all 9 required top-level BCO fields present
       - etag matches SHA-256 of the body with etag zeroed
       - download=true sets Content-Disposition
     """
     import hashlib
     import json as _json
+
+    global _CAMPAIGN_ID
+    if _CAMPAIGN_ID < 0:
+        created = client.post(
+            "/api/v1/campaigns",
+            params={"org_id": ORG},
+            json={
+                "org_id": ORG,
+                "project_name": "BCO-export-program",
+                "name": "bco_export_campaign",
+                "campaign_type": "lead_optimization",
+                "project": {"name": "BCO-export-program", "target_name": "EGFR"},
+            },
+        )
+        assert created.status_code == 200, created.text
+        _CAMPAIGN_ID = created.json()["id"]
 
     r = client.get(
         f"/api/v1/campaigns/{_CAMPAIGN_ID}/export/bco",
@@ -612,12 +827,13 @@ def test_export_bco_has_required_domains_and_valid_etag():
     bco = r.json()
 
     required = {
-        "object_id", "spec_version", "etag",
+        "object_id", "spec_version",
         "provenance_domain", "usability_domain", "description_domain",
         "execution_domain", "io_domain", "parametric_domain", "error_domain",
     }
     missing = required - set(bco.keys())
     assert not missing, f"BCO missing required fields: {missing}"
+    assert "etag" in bco
 
     # Spot-check spec_version and object_id shape
     assert bco["spec_version"] == "https://w3id.org/ieee/ieee-2791-schema/"
@@ -634,7 +850,7 @@ def test_export_bco_has_required_domains_and_valid_etag():
     etag_received = bco["etag"]
     body_for_hash = dict(bco)
     body_for_hash["etag"] = ""
-    canonical = _json.dumps(body_for_hash, sort_keys=True, separators=(",", ":"), default=str)
+    canonical = _json.dumps(body_for_hash, sort_keys=True)
     expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     assert etag_received == expected, (
         f"etag mismatch: got {etag_received!r}, expected {expected!r}"
@@ -650,7 +866,7 @@ def test_export_bco_has_required_domains_and_valid_etag():
     )
     assert r2.status_code == 200
     cd = r2.headers.get("content-disposition", "")
-    assert "attachment" in cd and "BCO.json" in cd
+    assert "attachment" in cd and "_BCO_" in cd and cd.endswith('.json"')
 
 
 def test_export_evidence_book_zip_contents_and_checksums():

@@ -19,6 +19,8 @@ import pandas as pd
 import numpy as np
 
 from .base import BaseParser, ParsedResult
+from .wetlab.assay_format import detect_assay_format, detect_plate_metadata
+from .wetlab.assay_qc import AssayQCEngine
 
 
 class GenericCSVParser(BaseParser):
@@ -44,7 +46,7 @@ class GenericCSVParser(BaseParser):
     ENCODINGS = ["utf-8", "utf-8-sig", "latin-1", "cp1252", "iso-8859-1"]
 
     def supported_extensions(self) -> List[str]:
-        return [".csv", ".tsv", ".txt", ".dat"]
+        return [".csv", ".tsv", ".txt", ".dat", ".xlsx", ".xls"]
 
     def detect(self, file_path: str) -> bool:
         """
@@ -79,39 +81,48 @@ class GenericCSVParser(BaseParser):
 
         warnings = []
         file_size = os.path.getsize(file_path)
+        ext = os.path.splitext(file_path)[1].lower()
 
-        # Detect encoding
-        encoding = self._detect_encoding(file_path)
-        if encoding != "utf-8":
-            warnings.append(f"Non-UTF-8 encoding detected: {encoding}")
+        if ext in (".xlsx", ".xls"):
+            encoding = "utf-8"
+            has_header = True
+            try:
+                df = pd.read_excel(file_path)
+            except Exception as e:
+                raise ValueError(f"Failed to parse Excel file: {e}")
+        else:
+            # Detect encoding
+            encoding = self._detect_encoding(file_path)
+            if encoding != "utf-8":
+                warnings.append(f"Non-UTF-8 encoding detected: {encoding}")
 
-        # Read sample to detect format
-        sample = self._read_sample(file_path, encoding=encoding)
+            # Read sample to detect format
+            sample = self._read_sample(file_path, encoding=encoding)
 
-        # Detect delimiter
-        delimiter = self._detect_delimiter(sample)
-        if delimiter != ",":
-            warnings.append(f"Non-standard delimiter detected: {repr(delimiter)}")
+            # Detect delimiter
+            delimiter = self._detect_delimiter(sample)
+            if delimiter != ",":
+                warnings.append(f"Non-standard delimiter detected: {repr(delimiter)}")
 
-        # Detect if file has header
-        has_header, header_confidence = self._detect_header(sample, delimiter)
+            # Detect if file has header
+            has_header, header_confidence = self._detect_header(sample, delimiter)
 
-        # Detect comment character
-        comment_char = self._detect_comment_char(sample)
+            # Detect comment character
+            comment_char = self._detect_comment_char(sample)
 
-        # Parse with pandas
-        try:
-            df = pd.read_csv(
-                file_path,
-                delimiter=delimiter,
-                encoding=encoding,
-                header=0 if has_header else None,
-                comment=comment_char,
-                on_bad_lines="warn",
-                engine="python",  # More flexible parsing
-            )
-        except Exception as e:
-            raise ValueError(f"Failed to parse CSV: {e}")
+            # Parse with pandas
+            try:
+                df = pd.read_csv(
+                    file_path,
+                    delimiter=delimiter,
+                    encoding=encoding,
+                    header=0 if has_header else None,
+                    comment=comment_char,
+                    on_bad_lines="warn",
+                    engine="python",  # More flexible parsing
+                )
+            except Exception as e:
+                raise ValueError(f"Failed to parse CSV: {e}")
 
         # If no header, generate column names
         if not has_header:
@@ -129,7 +140,19 @@ class GenericCSVParser(BaseParser):
         raw_stats = self.compute_column_stats(df)
 
         # Extract any metadata from the file (comments, etc.)
-        metadata = self._extract_metadata(file_path, encoding)
+        metadata = {} if ext in (".xlsx", ".xls") else self._extract_metadata(file_path, encoding)
+
+        try:
+            assay_format = detect_assay_format(df, list(df.columns))
+            metadata["assay_format"] = assay_format
+            metadata.update(detect_plate_metadata(df, list(df.columns)))
+            if assay_format != "unknown":
+                metadata["assay_qc"] = [
+                    result.to_dict()
+                    for result in AssayQCEngine().run(df, assay_format)
+                ]
+        except Exception as e:
+            warnings.append(f"Assay QC detection failed: {e}")
 
         # Try to detect timestamp from file or metadata
         timestamp = self._detect_timestamp(file_path, metadata)

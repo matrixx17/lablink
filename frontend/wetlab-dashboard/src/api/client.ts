@@ -13,6 +13,19 @@ export type WetlabCampaign = {
   extra_params?: Record<string, unknown> | null;
   created_at?: string | null;
   batch_count: number;
+  approvals: CampaignApproval[];
+  is_approved: boolean;
+  approval_count: number;
+};
+
+export type CampaignApproval = {
+  id: string;
+  campaign_id: string;
+  approved_by_user_id: string;
+  approved_by_name: string;
+  approval_meaning: "author" | "reviewer" | "approver";
+  comments?: string | null;
+  created_at: string;
 };
 
 export type WetlabBatch = {
@@ -110,10 +123,23 @@ export const api = {
   campaignMethods: (id: string, orgId: string) =>
     request<{
       campaign_id: string;
+      campaign_name: string;
       generated_at: string;
+      domain?: string;
       paragraphs: Record<string, string>;
       full_text: string;
       missing_fields: string[];
-      instrument_summary: Record<string, unknown>;
+      software_versions: Record<string, string[]>;
+      run_counts: Record<string, number>;
     }>(`/api/v1/campaigns/${id}/methods?${orgParam(orgId)}`),
+  approveCampaign: (
+    id: string,
+    orgId: string,
+    body: { approval_meaning: "author" | "reviewer" | "approver"; comments?: string },
+  ) =>
+    request<CampaignApproval>(`/api/v1/campaigns/${id}/approve?${orgParam(orgId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
 };

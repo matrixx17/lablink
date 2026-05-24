@@ -12,9 +12,11 @@ can render either with a single UI page.
 
 from __future__ import annotations
 
-from collections import Counter
+import json
+import statistics
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, DefaultDict, Dict, Iterable, List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -23,19 +25,11 @@ from database import Batch, Campaign, OfflineSample, TimeseriesData
 # Tone of voice: present tense, terse, no marketing.
 
 
-def generate_methods(db: Session, campaign: Campaign) -> Dict[str, Any]:
+def generate_wetlab_methods(db: Session, campaign: Campaign) -> Dict[str, Any]:
     """Build the methods doc for a wet lab campaign.
 
-    Returns:
-        {
-          "campaign_id": str,
-          "generated_at": iso-8601,
-          "domain": "wetlab",
-          "paragraphs": {bioreactor, offline, chromatography},
-          "full_text": "\n\n".join(non-empty paragraphs),
-          "missing_fields": [str, ...],
-          "instrument_summary": {bioreactor_models: [...], cell_lines: [...], ...},
-        }
+    The response intentionally mirrors the comp-chem methods export contract so
+    the shared dashboard page can render either domain.
     """
     batches = (
         db.query(Batch)
@@ -55,19 +49,16 @@ def generate_methods(db: Session, campaign: Campaign) -> Dict[str, Any]:
             db.query(TimeseriesData).filter(TimeseriesData.batch_id.in_(batch_ids)).all()
         )
 
-    missing: List[str] = []
-
-    bioreactor_para = _bioreactor_paragraph(batches, timeseries, missing)
-    offline_para = _offline_paragraph(offline_samples, missing)
-    chrom_para = _chromatography_paragraph(timeseries, missing)
-
+    missing_fields: List[str] = []
+    paragraph_order = ("bioreactor", "cell_analysis", "titer", "metabolites", "chromatography")
     paragraphs = {
-        "bioreactor": bioreactor_para,
-        "offline": offline_para,
-        "chromatography": chrom_para,
+        "bioreactor": _bioreactor_paragraph(batches, timeseries, missing_fields),
+        "cell_analysis": _cell_analysis_paragraph(offline_samples, missing_fields),
+        "titer": _titer_paragraph(offline_samples, missing_fields),
+        "metabolites": _metabolites_paragraph(batches, offline_samples, missing_fields),
+        "chromatography": _chromatography_paragraph(timeseries, missing_fields),
     }
-    # Drop any empty paragraphs from the full-text concatenation.
-    full_text = "\n\n".join(p for p in paragraphs.values() if p)
+    full_text = "\n\n".join(paragraphs[key] for key in paragraph_order if paragraphs.get(key))
 
     return {
         "campaign_id": str(campaign.id),
@@ -76,15 +67,25 @@ def generate_methods(db: Session, campaign: Campaign) -> Dict[str, Any]:
         "domain": "wetlab",
         "paragraphs": paragraphs,
         "full_text": full_text,
-        "missing_fields": missing,
-        "instrument_summary": _instrument_summary(batches, offline_samples, timeseries),
+        "missing_fields": _unique_ordered(missing_fields),
+        "software_versions": _equipment_versions(batches, offline_samples, timeseries),
+        "run_counts": {
+            "batches": len(batches),
+            "total_offline_samples": len(offline_samples),
+            "continuous_timepoints": _continuous_timepoint_count(timeseries),
+        },
     }
 
 
 # ---------------------------------------------------------------------- helpers
 
 
-def _mode(values: List[Any]) -> Optional[Any]:
+def generate_methods(db: Session, campaign: Campaign) -> Dict[str, Any]:
+    """Backward-compatible alias for existing wet lab callers."""
+    return generate_wetlab_methods(db, campaign)
+
+
+def _mode(values: Iterable[Any]) -> Optional[Any]:
     """Most common non-null value or None."""
     cleaned = [v for v in values if v is not None and v != ""]
     if not cleaned:
@@ -98,37 +99,96 @@ def _placeholder(field: str, missing: List[str]) -> str:
     return "[not recorded]"
 
 
-def _continuous_mode_for(
-    timeseries: List[TimeseriesData], parameter: str,
-) -> Optional[float]:
-    """Estimate the controller setpoint for `parameter` as the mode of its
-    values across all batches at 0.05 precision."""
-    # NB: ARRAY columns may come back as JSON strings on SQLite; tolerate.
-    import json as _json
+def _coerce_array(value: Any) -> List[Any]:
+    """Tolerate PostgreSQL ARRAY plus SQLite JSON/string test fixtures."""
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+    if isinstance(value, list) and value and isinstance(value[0], str) and len(value[0]) == 1:
+        try:
+            parsed = json.loads("".join(value))
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return value
+    return value if isinstance(value, list) else []
+
+
+def _float_values(value: Any) -> List[float]:
+    out: List[float] = []
+    for item in _coerce_array(value):
+        try:
+            out.append(float(item))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _continuous_mode_for(timeseries: List[TimeseriesData], parameter: str) -> Optional[float]:
+    """Estimate a controller setpoint as the mode at 0.05 precision."""
     all_vals: List[float] = []
     for r in timeseries:
         if r.parameter_name != parameter:
             continue
-        vals = r.values
-        if isinstance(vals, str):
-            try:
-                vals = _json.loads(vals)
-            except Exception:
-                continue
-        if isinstance(vals, list) and vals and isinstance(vals[0], str) and len(vals[0]) == 1:
-            try:
-                vals = _json.loads("".join(vals))
-            except Exception:
-                continue
-        for v in vals or []:
-            try:
-                all_vals.append(float(v))
-            except (TypeError, ValueError):
-                continue
+        all_vals.extend(_float_values(r.values))
     if not all_vals:
         return None
     rounded = [round(v / 0.05) * 0.05 for v in all_vals]
     return float(Counter(rounded).most_common(1)[0][0])
+
+
+def _extra_mode(batches: List[Batch], keys: Iterable[str]) -> Optional[Any]:
+    for key in keys:
+        value = _mode([(b.extra_params or {}).get(key) for b in batches])
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _sample_interval_hours(samples: List[OfflineSample], measurement_names: Iterable[str]) -> Optional[float]:
+    names = set(measurement_names)
+    by_batch: DefaultDict[str, List[float]] = defaultdict(list)
+    for sample in samples:
+        if sample.measurement_name not in names or sample.sample_time_hours is None:
+            continue
+        by_batch[sample.batch_id].append(float(sample.sample_time_hours))
+
+    intervals: List[float] = []
+    for hours in by_batch.values():
+        ordered = sorted(set(hours))
+        intervals.extend(
+            round(ordered[i] - ordered[i - 1], 2)
+            for i in range(1, len(ordered))
+            if ordered[i] > ordered[i - 1]
+        )
+    return _mode(intervals)
+
+
+def _fmt_number(value: Any, digits: int = 1) -> str:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if num.is_integer():
+        return str(int(num))
+    return f"{num:.{digits}f}".rstrip("0").rstrip(".")
+
+
+def _fmt_interval(value: Optional[float], missing: List[str], field: str) -> str:
+    if value is None:
+        return _placeholder(field, missing)
+    if abs(value - round(value)) < 0.01:
+        return f"{int(round(value))}-hour"
+    return f"{_fmt_number(value, 1)}-hour"
+
+
+def _measurement_groups(samples: List[OfflineSample]) -> Dict[str, List[OfflineSample]]:
+    grouped: Dict[str, List[OfflineSample]] = defaultdict(list)
+    for sample in samples:
+        grouped[sample.measurement_name].append(sample)
+    return grouped
 
 
 # ---------------------------------------------------------------------- paragraphs
@@ -147,28 +207,25 @@ def _bioreactor_paragraph(
     cell_mode = _mode([b.cell_line for b in batches])
     media_mode = _mode([b.media for b in batches])
 
-    # Run duration: median of (harvest - inoculation) in days
     durations: List[float] = []
     for b in batches:
         if b.harvest_date and b.inoculation_date:
             delta = b.harvest_date - b.inoculation_date
             durations.append(delta.total_seconds() / 86400.0)
     duration_str = (
-        f"{int(round(sum(durations) / len(durations)))}" if durations else None
+        _fmt_number(statistics.median(durations), 1) if durations else None
     )
 
-    # Setpoints from continuous data (mode estimator)
-    ph_setpoint = _continuous_mode_for(timeseries, "ph")
-    do_setpoint = _continuous_mode_for(timeseries, "do_percent")
-    temp_setpoint = _continuous_mode_for(timeseries, "temperature_c")
-
-    # Also accept explicit extra_params.ph_setpoint when present
-    if ph_setpoint is None:
-        ep = [(b.extra_params or {}).get("ph_setpoint") for b in batches]
-        ph_setpoint = _mode([v for v in ep if v is not None])
-
-    def fmt(v: Optional[float], digits: int = 1) -> str:
-        return f"{v:.{digits}f}" if v is not None else None  # type: ignore[return-value]
+    ph_setpoint = _extra_mode(batches, ("ph_setpoint",)) or _continuous_mode_for(timeseries, "ph")
+    do_setpoint = (
+        _extra_mode(batches, ("do_setpoint_percent", "do_setpoint"))
+        or _continuous_mode_for(timeseries, "do_percent")
+    )
+    temp_setpoint = (
+        _extra_mode(batches, ("temperature_setpoint_c", "temperature_c"))
+        or _continuous_mode_for(timeseries, "temperature_c")
+    )
+    feed_strategy = _extra_mode(batches, ("feed_strategy", "feed"))
 
     bioreactor_str = bioreactor_mode or _placeholder("bioreactor_model", missing)
     volume_str = f"{volume_mode:g}" if volume_mode is not None else _placeholder(
@@ -177,85 +234,124 @@ def _bioreactor_paragraph(
     cell_str = cell_mode or _placeholder("cell_line", missing)
     media_str = media_mode or _placeholder("media", missing)
     duration_str = duration_str or _placeholder("run_duration", missing)
-    ph_str = fmt(ph_setpoint, 2) if ph_setpoint is not None else _placeholder(
+    ph_str = _fmt_number(ph_setpoint, 2) if ph_setpoint is not None else _placeholder(
         "ph_setpoint", missing
     )
-    do_str = fmt(do_setpoint, 0) if do_setpoint is not None else _placeholder(
+    do_str = _fmt_number(do_setpoint, 0) if do_setpoint is not None else _placeholder(
         "do_setpoint", missing
     )
-    temp_str = fmt(temp_setpoint, 1) if temp_setpoint is not None else _placeholder(
+    temp_str = _fmt_number(temp_setpoint, 1) if temp_setpoint is not None else _placeholder(
         "temperature_setpoint", missing
     )
+    feed_str = f" Feeding used a {feed_strategy} strategy." if feed_strategy else ""
 
     return (
         f"Fed-batch cell culture was performed in a {volume_str} L {bioreactor_str} "
         f"bioreactor. {cell_str} cells were cultured in {media_str} medium for "
         f"{duration_str} days. pH was controlled to {ph_str} ± 0.05, dissolved "
         f"oxygen was maintained above {do_str}% air saturation, and temperature "
-        f"was held at {temp_str}°C. A total of {len(batches)} independent "
+        f"was held at {temp_str}°C.{feed_str} A total of {len(batches)} independent "
         f"bioreactor runs were performed."
     )
 
 
-def _offline_paragraph(
-    samples: List[OfflineSample], missing: List[str],
-) -> str:
+def _cell_analysis_paragraph(samples: List[OfflineSample], missing: List[str]) -> str:
     if not samples:
         return ""
 
-    present_params = {s.measurement_name for s in samples}
-    # Pick a representative instrument per measurement.
-    instrument_by_param: Dict[str, Optional[str]] = {}
-    for s in samples:
-        if s.instrument and s.measurement_name not in instrument_by_param:
-            instrument_by_param[s.measurement_name] = s.instrument
+    groups = _measurement_groups(samples)
+    cell_measurements = ("vcd_e6_per_ml", "viable_cell_density_e6_per_ml", "viability_percent")
+    cell_samples = [s for name in cell_measurements for s in groups.get(name, [])]
+    if not cell_samples:
+        return ""
 
-    sentences: List[str] = []
+    inst = _mode([s.instrument for s in cell_samples]) or _placeholder("cell_counter_instrument", missing)
+    interval = _fmt_interval(_sample_interval_hours(samples, cell_measurements), missing, "cell_analysis_interval")
+    return (
+        f"Viable cell density and viability were measured at {interval} intervals "
+        f"using a {inst} automated cell counter."
+    )
 
-    if "vcd_e6_per_ml" in present_params or "viable_cell_density_e6_per_ml" in present_params:
-        inst = (
-            instrument_by_param.get("vcd_e6_per_ml")
-            or instrument_by_param.get("viable_cell_density_e6_per_ml")
-            or _placeholder("cell_counter_instrument", missing)
-        )
-        sentences.append(
-            f"Cell density and viability were measured every 24 hours using a "
-            f"{inst} automated cell counter."
-        )
 
-    if "titer_mg_per_l" in present_params:
-        method = instrument_by_param.get("titer_mg_per_l") or _placeholder(
-            "titer_method", missing
-        )
-        sentences.append(
-            f"Product titer was quantified by {method} at 24-hour intervals."
-        )
+def _titer_paragraph(samples: List[OfflineSample], missing: List[str]) -> str:
+    titer_samples = [s for s in samples if s.measurement_name == "titer_mg_per_l"]
+    if not titer_samples:
+        return ""
 
-    if "glucose_g_per_l" in present_params and "lactate_g_per_l" in present_params:
-        analyser = (
-            instrument_by_param.get("glucose_g_per_l")
-            or instrument_by_param.get("lactate_g_per_l")
-            or _placeholder("metabolite_analyser", missing)
-        )
-        sentences.append(
-            f"Glucose and lactate concentrations were measured using a {analyser} "
-            f"biochemistry analyzer."
-        )
-    elif "glucose_g_per_l" in present_params:
-        analyser = instrument_by_param.get("glucose_g_per_l") or _placeholder(
-            "metabolite_analyser", missing
-        )
-        sentences.append(
-            f"Glucose concentration was measured using a {analyser} analyzer."
-        )
+    method = _mode([s.instrument for s in titer_samples]) or _placeholder("titer_method", missing)
+    interval = _fmt_interval(_sample_interval_hours(samples, ("titer_mg_per_l",)), missing, "titer_interval")
+    final_values: List[float] = []
+    by_batch: DefaultDict[str, List[OfflineSample]] = defaultdict(list)
+    for sample in titer_samples:
+        by_batch[sample.batch_id].append(sample)
+    for batch_samples in by_batch.values():
+        ordered = sorted(batch_samples, key=lambda s: s.sample_time_hours or -1.0)
+        if ordered and ordered[-1].value is not None:
+            final_values.append(float(ordered[-1].value))
 
-    if "osmolality_mosm" in present_params:
-        inst = instrument_by_param.get("osmolality_mosm") or _placeholder(
-            "osmometer", missing
-        )
-        sentences.append(f"Osmolality was measured using a {inst} osmometer.")
+    if final_values:
+        if len(final_values) == 1:
+            titer_text = f"The final recorded titer was {_fmt_number(final_values[0], 0)} mg/L."
+        else:
+            titer_text = (
+                f"Final recorded titers ranged from {_fmt_number(min(final_values), 0)} to "
+                f"{_fmt_number(max(final_values), 0)} mg/L."
+            )
+    else:
+        titer_text = "Final recorded titer was [not recorded]."
+        _placeholder("final_titer", missing)
 
-    return " ".join(sentences)
+    return f"Product titer was quantified by {method} at {interval} intervals. {titer_text}"
+
+
+def _metabolites_paragraph(
+    batches: List[Batch],
+    samples: List[OfflineSample],
+    missing: List[str],
+) -> str:
+    metabolite_names = ("glucose_g_per_l", "lactate_g_per_l", "osmolality_mosm")
+    metabolite_samples = [s for s in samples if s.measurement_name in metabolite_names]
+    if not metabolite_samples:
+        return ""
+
+    analyzer = _mode([
+        s.instrument for s in metabolite_samples
+        if s.measurement_name in ("glucose_g_per_l", "lactate_g_per_l")
+    ]) or _mode([s.instrument for s in metabolite_samples]) or _placeholder("metabolite_analyzer", missing)
+    interval = _fmt_interval(_sample_interval_hours(samples, metabolite_names), missing, "metabolite_interval")
+    measured = sorted({
+        "glucose" if s.measurement_name == "glucose_g_per_l"
+        else "lactate" if s.measurement_name == "lactate_g_per_l"
+        else "osmolality"
+        for s in metabolite_samples
+    })
+    if len(measured) == 1:
+        measured_text = measured[0]
+        verb = "was"
+    elif len(measured) == 2:
+        measured_text = " and ".join(measured)
+        verb = "were"
+    else:
+        measured_text = ", ".join(measured[:-1]) + f", and {measured[-1]}"
+        verb = "were"
+    threshold = _extra_mode(
+        batches,
+        (
+            "glucose_feed_threshold_g_per_l",
+            "feed_threshold_g_per_l",
+            "feed_threshold",
+            "glucose_threshold_g_per_l",
+        ),
+    )
+    threshold_text = (
+        f"Glucose-triggered feeding used a {_fmt_number(threshold, 2)} g/L threshold."
+        if threshold not in (None, "")
+        else f"Glucose-triggered feeding threshold was {_placeholder('feed_threshold', missing)}."
+    )
+    return (
+        f"{measured_text.capitalize()} {verb} measured at {interval} intervals using a "
+        f"{analyzer} biochemistry analyzer. {threshold_text}"
+    )
 
 
 def _chromatography_paragraph(
@@ -331,3 +427,55 @@ def _instrument_summary(
             for r in timeseries
         ),
     }
+
+
+def _equipment_versions(
+    batches: List[Batch],
+    samples: List[OfflineSample],
+    timeseries: List[TimeseriesData],
+) -> Dict[str, List[str]]:
+    equipment: Dict[str, set] = {}
+
+    def add(category: str, value: Optional[str]) -> None:
+        if value:
+            equipment.setdefault(category, set()).add(value)
+
+    for value in {b.bioreactor_model for b in batches if b.bioreactor_model}:
+        add("Bioreactor", value)
+
+    for sample in samples:
+        name = sample.measurement_name
+        if name in ("vcd_e6_per_ml", "viable_cell_density_e6_per_ml", "viability_percent"):
+            add("Cell analysis", sample.instrument)
+        elif name == "titer_mg_per_l":
+            add("Titer", sample.instrument)
+        elif name in ("glucose_g_per_l", "lactate_g_per_l"):
+            add("Metabolites", sample.instrument)
+        elif name == "osmolality_mosm":
+            add("Osmolality", sample.instrument)
+
+    for row in timeseries:
+        if row.parameter_name == "uv_absorbance_mau" or (row.series_metadata or {}).get("x_axis") == "ml":
+            add("Chromatography", row.source_instrument)
+        else:
+            add("Continuous controller", row.source_instrument)
+
+    return {name: sorted(values) for name, values in sorted(equipment.items())}
+
+
+def _continuous_timepoint_count(timeseries: List[TimeseriesData]) -> int:
+    total = 0
+    for row in timeseries:
+        total += len(_coerce_array(row.timestamps))
+    return total
+
+
+def _unique_ordered(values: List[str]) -> List[str]:
+    seen = set()
+    out: List[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out

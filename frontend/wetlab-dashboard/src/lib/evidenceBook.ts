@@ -13,12 +13,32 @@
  * default navigation.
  */
 
+type DownloadResult = {
+  filename: string;
+  fileCount: number;
+};
+
+function countZipEntries(bytes: Uint8Array): number {
+  let count = 0;
+  for (let i = 0; i < bytes.length - 3; i++) {
+    if (
+      bytes[i] === 0x50 &&
+      bytes[i + 1] === 0x4b &&
+      bytes[i + 2] === 0x03 &&
+      bytes[i + 3] === 0x04
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 async function downloadZip(
   campaignId: string,
   orgId: string,
   format: "evidence-book" | "batch-record",
   fallbackPrefix: string,
-): Promise<string> {
+): Promise<DownloadResult> {
   const url =
     `/api/v1/campaigns/${encodeURIComponent(campaignId)}` +
     `/export/evidence-book` +
@@ -32,6 +52,7 @@ async function downloadZip(
   }
 
   const blob = await r.blob();
+  const fileCount = countZipEntries(new Uint8Array(await blob.arrayBuffer()));
   const cd = r.headers.get("Content-Disposition") || "";
   const match = /filename="([^"]+)"/.exec(cd);
   const filename = match?.[1] ?? `${fallbackPrefix}-${campaignId}.zip`;
@@ -44,19 +65,19 @@ async function downloadZip(
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-  return filename;
+  return { filename, fileCount };
 }
 
 export function downloadEvidenceBook(
   campaignId: string,
   orgId: string,
-): Promise<string> {
+): Promise<DownloadResult> {
   return downloadZip(campaignId, orgId, "evidence-book", "evidence-book");
 }
 
 export function downloadBatchRecord(
   campaignId: string,
   orgId: string,
-): Promise<string> {
+): Promise<DownloadResult> {
   return downloadZip(campaignId, orgId, "batch-record", "batch-record");
 }

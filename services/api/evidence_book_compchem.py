@@ -35,6 +35,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from compchem_bco import build_bco
+from evidence_book_approvals import collect_campaign_approvals
 from compchem_models import (
     AssayResult,
     AuditEvent,
@@ -142,6 +143,13 @@ def build_evidence_book(
 
     root_hash = audit_rows[0].record_hash if audit_rows else None
     tip_hash = audit_rows[-1].record_hash if audit_rows else None
+    approvals, is_approved = collect_campaign_approvals(
+        db,
+        campaign_id=campaign.id,
+        org_id=org_id,
+        domain="compchem",
+        campaign=campaign,
+    )
 
     verification: Dict[str, Any] = {
         "schema": EVIDENCE_BOOK_SCHEMA,
@@ -155,6 +163,8 @@ def build_evidence_book(
         ),
         "audit_chain_detail": audit_chain_status,
         "total_events_verified": audit_chain_status["record_count"],
+        "approvals": approvals,
+        "is_approved": is_approved,
         "molecules_exported": int(len(molecules_df)),
         "runs_exported": int(len(runs_df)),
         "metrics_exported": int(len(metrics_df)),

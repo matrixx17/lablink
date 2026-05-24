@@ -2,13 +2,14 @@
 import os
 import hashlib
 import json
+import uuid
 from datetime import datetime, timezone
 from enum import Enum as PyEnum
 from typing import Optional, Dict, Any
 
 from sqlalchemy import (
     create_engine, Column, Integer, String, JSON, Text,
-    DateTime, Enum, Index, Boolean, Float, UniqueConstraint
+    CheckConstraint, DateTime, Enum, Float, ForeignKey, Index, Boolean, UniqueConstraint
 )
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
@@ -184,6 +185,7 @@ class AuditAction(PyEnum):
     WEBHOOK_TRIGGERED = "webhook_triggered"
     BASELINE_UPDATED = "baseline_updated"
     BASELINE_RESET = "baseline_reset"
+    CAMPAIGN_APPROVED = "campaign_approved"
 
 
 class EntityType(PyEnum):
@@ -194,6 +196,7 @@ class EntityType(PyEnum):
     USER = "user"
     WEBHOOK = "webhook"
     BASELINE = "baseline"
+    CAMPAIGN = "campaign"
 
 
 class AuditLog(Base):
@@ -213,8 +216,8 @@ class AuditLog(Base):
         index=True
     )
     org_id = Column(String(128), nullable=False, index=True)
-    action = Column(Enum(AuditAction), nullable=False, index=True)
-    entity_type = Column(Enum(EntityType), nullable=False)
+    action = Column(Enum(AuditAction, values_callable=lambda x: [e.value for e in x]), nullable=False, index=True)
+    entity_type = Column(Enum(EntityType, values_callable=lambda x: [e.value for e in x]), nullable=False)
     entity_id = Column(String(512), nullable=False)
     actor = Column(String(256), nullable=False)
     details = Column(JSONB, nullable=True)
@@ -288,6 +291,60 @@ class Campaign(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
+    )
+
+
+class User(Base):
+    """Authenticated user identity resolved from the current auth actor."""
+    __tablename__ = "users"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    org_id = Column(String(128), nullable=False, index=True)
+    email = Column(String(255), nullable=True, index=True)
+    username = Column(String(255), nullable=True, index=True)
+    name = Column(String(255), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "email", name="uq_users_org_email"),
+        UniqueConstraint("org_id", "username", name="uq_users_org_username"),
+    )
+
+
+class CampaignApproval(Base):
+    """Part 11-style campaign sign-off record."""
+    __tablename__ = "campaign_approvals"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id = Column(
+        String(36),
+        ForeignKey("campaigns.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    approved_by_user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    approved_by_name = Column(String(255), nullable=False)
+    approval_meaning = Column(String(50), nullable=False)
+    comments = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "approval_meaning IN ('author', 'reviewer', 'approver')",
+            name="ck_campaign_approvals_meaning",
+        ),
+        Index("ix_campaign_approvals_campaign_id", "campaign_id"),
     )
 
 

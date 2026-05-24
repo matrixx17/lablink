@@ -17,6 +17,23 @@ from timeseries_align import align_run_series, extract_series_from_stats
 FIXTURES = os.path.join(os.path.dirname(__file__), "..", "..", "tests", "fixtures")
 
 
+@pytest.fixture(autouse=True)
+def _restore_global_test_state():
+    """Keep this module's SQLite/env patches from leaking into other suites."""
+    import database as db_module
+
+    original_engine = db_module.engine
+    original_session_local = db_module.SessionLocal
+    original_demo_secret = os.environ.get("DEMO_RESET_SECRET")
+    yield
+    db_module.engine = original_engine
+    db_module.SessionLocal = original_session_local
+    if original_demo_secret is None:
+        os.environ.pop("DEMO_RESET_SECRET", None)
+    else:
+        os.environ["DEMO_RESET_SECRET"] = original_demo_secret
+
+
 def test_sartorius_biostat_detection():
     path = os.path.join(FIXTURES, "biostat_run.csv")
     assert detect_format(path) == "sartorius_biostat"
@@ -84,7 +101,8 @@ def test_evidence_book_export_zip_and_checksums(tmp_path):
     import zipfile as _zip
     from datetime import datetime, timedelta, timezone
 
-    from sqlalchemy import create_engine
+    import json as _json
+    from sqlalchemy import create_engine, text
     from sqlalchemy.orm import sessionmaker
 
     # Patch JSONB / ARRAY for SQLite. Mirrors test_compchem_routes.py pattern.
@@ -107,7 +125,8 @@ def test_evidence_book_export_zip_and_checksums(tmp_path):
     tables = [
         t for t in Base.metadata.sorted_tables
         if t.name in ("campaigns", "batches", "offline_samples",
-                      "timeseries_data", "audit_logs")
+                      "timeseries_data", "users", "campaign_approvals",
+                      "audit_logs")
     ]
     Base.metadata.create_all(engine, tables=tables)
 
@@ -224,6 +243,8 @@ def test_evidence_book_export_zip_and_checksums(tmp_path):
     assert verification["schema"] == "lablink.evidence-book.verification/v1"
     assert verification["campaign_id"] == campaign.id
     assert verification["audit_chain_status"] == "verified", verification
+    assert verification["approvals"] == []
+    assert verification["is_approved"] is False
 
     for name, entry in verification["file_checksums"].items():
         recomputed = hashlib.sha256(zf.read(name)).hexdigest()
@@ -398,12 +419,13 @@ def test_bioprocess_qc_engine_detects_broken_batch(tmp_path):
 
 
 def test_generate_wetlab_methods(tmp_path):
-    """Methods generator emits non-empty bioreactor + offline paragraphs and
+    """Methods generator emits shared-schema wet lab paragraphs and
     lists missing-fields when something can't be inferred."""
+    import json as _json
     import uuid
     from datetime import datetime, timedelta, timezone
 
-    from sqlalchemy import create_engine
+    from sqlalchemy import create_engine, text
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.dialects.postgresql import JSONB, ARRAY  # noqa: F401
     from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler
@@ -412,7 +434,7 @@ def test_generate_wetlab_methods(tmp_path):
 
     import database as db_module
     from database import Base, Campaign, Batch, OfflineSample
-    from bioprocess_methods import generate_methods
+    from bioprocess_methods import generate_wetlab_methods
 
     db_path = tmp_path / "methods.db"
     engine = create_engine(f"sqlite:///{db_path}", future=True)
@@ -446,7 +468,25 @@ def test_generate_wetlab_methods(tmp_path):
             extra_params={"ph_setpoint": 7.0},
         )
         s.add(b); s.flush()
-        # one VCD + one titer sample per batch
+        s.execute(
+            text("""
+                INSERT INTO timeseries_data
+                    (id, batch_id, parameter_name, unit, timestamps, "values",
+                     source_instrument, created_at)
+                VALUES
+                    (:id, :batch_id, :param, :unit, :timestamps, :values,
+                     :source, :created_at)
+            """),
+            {
+                "id": str(uuid.uuid4()), "batch_id": b.id,
+                "param": "ph", "unit": "pH",
+                "timestamps": _json.dumps([0.0, 3600.0]),
+                "values": _json.dumps([7.0, 7.02]),
+                "source": "Sartorius BIOSTAT B-DCU",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        # one VCD + one titer + one metabolite sample per batch
         s.add(OfflineSample(
             id=str(uuid.uuid4()), batch_id=b.id,
             sample_time_hours=72.0,
@@ -462,17 +502,31 @@ def test_generate_wetlab_methods(tmp_path):
             measurement_name="titer_mg_per_l", value=2000.0,
             unit="mg/L", instrument="Octet BLI", qc_status="pass",
         ))
+        s.add(OfflineSample(
+            id=str(uuid.uuid4()), batch_id=b.id,
+            sample_time_hours=72.0,
+            sample_time_absolute=inoc + timedelta(hours=72),
+            measurement_name="glucose_g_per_l", value=3.2,
+            unit="g/L", instrument="Nova BioProfile FLEX2", qc_status="pass",
+        ))
     s.commit()
 
-    result = generate_methods(s, campaign)
+    result = generate_wetlab_methods(s, campaign)
     assert result["domain"] == "wetlab"
     paragraphs = result["paragraphs"]
     assert "Sartorius BIOSTAT B-DCU" in paragraphs["bioreactor"]
     assert "CHO-K1" in paragraphs["bioreactor"]
     assert "2 L" in paragraphs["bioreactor"]
-    assert "Beckman Vi-CELL XR" in paragraphs["offline"]
-    assert "Octet BLI" in paragraphs["offline"]
+    assert "Beckman Vi-CELL XR" in paragraphs["cell_analysis"]
+    assert "Octet BLI" in paragraphs["titer"]
+    assert "Nova BioProfile FLEX2" in paragraphs["metabolites"]
     assert paragraphs["chromatography"] == ""  # no ÄKTA data
+    assert set(paragraphs) == {"bioreactor", "cell_analysis", "titer", "metabolites", "chromatography"}
+    assert result["run_counts"]["batches"] == 2
+    assert result["run_counts"]["total_offline_samples"] == 6
+    assert result["run_counts"]["continuous_timepoints"] == 4
+    assert result["software_versions"]["Bioreactor"] == ["Sartorius BIOSTAT B-DCU"]
+    assert result["software_versions"]["Cell analysis"] == ["Beckman Vi-CELL XR"]
     # Temperature setpoint not in timeseries — should be marked missing
     assert "temperature_setpoint" in result["missing_fields"]
     # Full text concatenates non-empty paragraphs with a blank-line separator
@@ -617,7 +671,8 @@ def test_methods_chromatography_uses_series_metadata(tmp_path):
     SessionLocal = sessionmaker(bind=engine, autoflush=False, future=True)
     tables = [
         t for t in Base.metadata.sorted_tables
-        if t.name in ("campaigns", "batches", "offline_samples", "timeseries_data", "audit_logs")
+        if t.name in ("campaigns", "batches", "offline_samples", "timeseries_data",
+                      "users", "campaign_approvals", "audit_logs")
     ]
     Base.metadata.create_all(engine, tables=tables)
     db_module.engine = engine
@@ -761,7 +816,7 @@ def test_batch_record_export_zip(tmp_path):
     zf = _zip.ZipFile(_io.BytesIO(br_bytes))
     br_names = set(zf.namelist())
     assert {
-        "batch_record_summary.pdf", "timeseries_data.csv",
+        "batch_record.pdf", "timeseries_data.csv",
         "offline_samples.csv", "batch_comparison.csv",
         "audit_log.csv", "verification.json",
     }.issubset(br_names)
@@ -797,6 +852,79 @@ def test_campaign_methods_route_domain_guard():
     with pytest.raises(HTTPException) as exc:
         get_campaign_methods("c1", db=db, auth=("demo-therapeutics", "test"))
     assert exc.value.status_code == 400
+
+
+def test_campaign_approval_workflow_persists_audit_and_response(tmp_path):
+    """Approving a wet lab campaign stores sign-off, audit row, and rollup."""
+    import uuid
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    import database as db_module
+    from database import Base, Campaign, AuditLog
+    from bioprocess_routes import (
+        ApprovalCreate,
+        approve_campaign,
+        get_campaign,
+        list_campaign_approvals,
+    )
+
+    db_path = tmp_path / "approval.db"
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, future=True)
+    tables = [
+        t for t in Base.metadata.sorted_tables
+        if t.name in ("campaigns", "batches", "users", "campaign_approvals", "audit_logs")
+    ]
+    Base.metadata.create_all(engine, tables=tables)
+    db_module.engine = engine
+    db_module.SessionLocal = SessionLocal
+
+    session = SessionLocal()
+    campaign = Campaign(
+        id=str(uuid.uuid4()),
+        org_id="demo-therapeutics",
+        name="Approval Campaign",
+        domain="wetlab",
+        extra_params={},
+    )
+    session.add(campaign)
+    session.commit()
+
+    approval = approve_campaign(
+        campaign_id=campaign.id,
+        body=ApprovalCreate(
+            approval_meaning="reviewer",
+            comments="Reviewed process data and QC package.",
+        ),
+        db=session,
+        auth=("demo-therapeutics", "reviewer@example.com"),
+    )
+    assert approval.approval_meaning == "reviewer"
+    assert approval.approved_by_name == "reviewer@example.com"
+
+    approvals = list_campaign_approvals(
+        campaign_id=campaign.id,
+        db=session,
+        auth=("demo-therapeutics", "reviewer@example.com"),
+    )
+    assert len(approvals) == 1
+    assert approvals[0].comments == "Reviewed process data and QC package."
+
+    detail = get_campaign(
+        campaign_id=campaign.id,
+        db=session,
+        auth=("demo-therapeutics", "reviewer@example.com"),
+    )
+    assert detail.is_approved is True
+    assert detail.approval_count == 1
+    assert detail.approvals[0].id == approval.id
+
+    audit = session.query(AuditLog).one()
+    assert audit.action.value == "campaign_approved"
+    assert audit.entity_id == campaign.id
+    assert audit.details["event"] == "campaign_approved"
+    assert "approved as reviewer" in audit.details["message"]
 
 
 def test_wetlab_parser_registry_contains_new_parsers():

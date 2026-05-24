@@ -22,6 +22,7 @@ from collections import Counter, OrderedDict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from compchem_models import (
@@ -91,7 +92,7 @@ def compute_etag(bco: Dict[str, Any]) -> str:
     """SHA-256 over canonical JSON with the etag field zeroed."""
     body = dict(bco)
     body["etag"] = ""
-    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
+    canonical = json.dumps(body, sort_keys=True)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -152,7 +153,7 @@ def _collect_contributors(db: Session, org_id: str, campaign_id: int) -> List[Di
 
 
 def _provenance_domain(
-    campaign: Campaign, contributors: List[Dict[str, Any]]
+    campaign: Campaign, contributors: List[Dict[str, Any]], review: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
     return {
         "name": campaign.name,
@@ -164,8 +165,46 @@ def _provenance_domain(
         "derived_from": None,
         "obsolete_after": None,
         "embargo": {},
-        "review": [],
+        "review": review,
     }
+
+
+def _collect_approval_reviews(db: Session, campaign: Campaign) -> List[Dict[str, Any]]:
+    """
+    Include Part 11 approval workflow records when that model/table is present.
+
+    The approval workflow is being merged independently, so this path must stay
+    optional: no model, no table, or a schema mismatch all mean "no reviews".
+    """
+    try:
+        from database import CampaignApproval  # type: ignore
+    except Exception:
+        return []
+
+    try:
+        rows = (
+            db.query(CampaignApproval)
+            .filter(CampaignApproval.campaign_id == str(campaign.id))
+            .order_by(CampaignApproval.created_at.asc())
+            .all()
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        return []
+
+    reviews: List[Dict[str, Any]] = []
+    for approval in rows:
+        reviews.append({
+            "status": "approved",
+            "type": getattr(approval, "approval_meaning", None),
+            "reviewer": {
+                "name": getattr(approval, "approved_by_name", None),
+                "user_id": getattr(approval, "approved_by_user_id", None),
+            },
+            "date": _iso(getattr(approval, "created_at", None)),
+            "comment": getattr(approval, "comments", None),
+        })
+    return reviews
 
 
 def _usability_domain(campaign: Campaign, project: Project) -> List[str]:
@@ -363,12 +402,13 @@ def build_bco(
         .all()
     )
     contributors = _collect_contributors(db, campaign.org_id, campaign.id)
+    review = _collect_approval_reviews(db, campaign)
 
     bco: Dict[str, Any] = {
         "object_id": f"lablink/{campaign.id}/bco/v1",
         "spec_version": BCO_SPEC_VERSION,
         "etag": "",  # placeholder, filled in below
-        "provenance_domain": _provenance_domain(campaign, contributors),
+        "provenance_domain": _provenance_domain(campaign, contributors, review),
         "usability_domain": _usability_domain(campaign, project),
         "description_domain": _description_domain(campaign, project, runs),
         "execution_domain": _execution_domain(campaign, runs),

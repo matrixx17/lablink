@@ -35,11 +35,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 from sqlalchemy.orm import Session
 
+from evidence_book_approvals import collect_campaign_approvals
 from database import (
     AuditAction,
     AuditLog,
     Batch,
     Campaign,
+    CampaignApproval,
     EntityType,
     OfflineSample,
     TimeseriesData,
@@ -99,6 +101,7 @@ def build_evidence_book(
     offline_df = _collect_offline_dataframe(db, batches)
     ts_summary_df = _collect_timeseries_summary_dataframe(db, batches)
     audit_rows = _collect_campaign_audit(db, campaign, batches, org_id)
+    approvals = _collect_campaign_approvals(db, campaign)
 
     audit_csv_bytes = _audit_rows_to_csv_bytes(audit_rows)
     batches_csv_bytes = _df_to_csv_bytes(batches_df)
@@ -137,6 +140,7 @@ def build_evidence_book(
         offline_df=offline_df,
         ts_summary_df=ts_summary_df,
         audit_rows=audit_rows,
+        approvals=approvals,
         audit_chain_status=audit_chain_status,
         audit_csv_sha256=checksums["audit_log.csv"],
         generated_at=generated_at,
@@ -146,6 +150,13 @@ def build_evidence_book(
 
     root_hash = audit_rows[0].record_hash if audit_rows else None
     tip_hash = audit_rows[-1].record_hash if audit_rows else None
+    approvals, is_approved = collect_campaign_approvals(
+        db,
+        campaign_id=campaign.id,
+        org_id=org_id,
+        domain=campaign.domain or "wetlab",
+        campaign=campaign,
+    )
 
     verification: Dict[str, Any] = {
         "schema": EVIDENCE_BOOK_SCHEMA,
@@ -159,6 +170,8 @@ def build_evidence_book(
         ),
         "audit_chain_detail": audit_chain_status,
         "total_events_verified": audit_chain_status["record_count"],
+        "approvals": approvals,
+        "is_approved": is_approved,
         "batches_exported": int(len(batches_df)),
         "offline_samples_exported": int(len(offline_df)),
         "timeseries_parameters_summarised": int(len(ts_summary_df)),
@@ -192,7 +205,7 @@ def build_batch_record(
     """
     Build the Batch Manufacturing Record ZIP for a wet lab campaign.
 
-    Contents: batch_record_summary.pdf, timeseries_data.csv,
+    Contents: batch_record.pdf, timeseries_data.csv,
     offline_samples.csv, batch_comparison.csv, audit_log.csv,
     verification.json.
     """
@@ -250,11 +263,18 @@ def build_batch_record(
         generated_at=generated_at,
         db=db,
     )
-    files["batch_record_summary.pdf"] = pdf_bytes
-    checksums["batch_record_summary.pdf"] = _sha256(pdf_bytes)
+    files["batch_record.pdf"] = pdf_bytes
+    checksums["batch_record.pdf"] = _sha256(pdf_bytes)
 
     root_hash = audit_rows[0].record_hash if audit_rows else None
     tip_hash = audit_rows[-1].record_hash if audit_rows else None
+    approvals, is_approved = collect_campaign_approvals(
+        db,
+        campaign_id=campaign.id,
+        org_id=org_id,
+        domain=campaign.domain or "wetlab",
+        campaign=campaign,
+    )
     verification: Dict[str, Any] = {
         "schema": EVIDENCE_BOOK_SCHEMA,
         "export_type": "batch-record",
@@ -268,6 +288,8 @@ def build_batch_record(
         ),
         "audit_chain_detail": audit_chain_status,
         "total_events_verified": audit_chain_status["record_count"],
+        "approvals": approvals,
+        "is_approved": is_approved,
         "batches_exported": int(len(batches)),
         "root_hash": root_hash,
         "tip_hash": tip_hash,
@@ -326,6 +348,7 @@ def _collect_batch_comparison(db: Session, batches: List[Batch]) -> pd.DataFrame
             "lead_condition": bool(extra.get("lead_condition")),
             "ph_setpoint": extra.get("ph_setpoint"),
             "feed_strategy": extra.get("feed_strategy"),
+            "disposition": extra.get("disposition") or b.status,
             "status": b.status,
         })
     return pd.DataFrame(rows)
@@ -393,7 +416,7 @@ def _build_batch_record_pdf(
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
     from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Table, PageBreak,
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak,
     )
 
     buf = io.BytesIO()
@@ -446,6 +469,7 @@ def _build_batch_record_pdf(
             ["pH setpoint", _fmt_num(extra.get("ph_setpoint"), digits=2)],
             ["Feed strategy", extra.get("feed_strategy") or "—"],
             ["QC status", extra.get("qc_status") or "—"],
+            ["Disposition", extra.get("disposition") or b.status or "—"],
             ["Lead condition", "Yes" if extra.get("lead_condition") else "No"],
         ]
         mt = Table(meta_rows, colWidths=[1.6 * inch, 4.6 * inch])
@@ -514,6 +538,53 @@ def _build_batch_record_pdf(
             flow.append(qt)
 
         flow.append(PageBreak())
+
+    # Final comparison page
+    flow.append(Paragraph("BATCH COMPARISON", eyebrow))
+    flow.append(Paragraph("Campaign outcome summary", h2))
+    if not comparison_df.empty:
+        comparison_data = [[
+            "Batch", "Condition", "Peak VCD", "Final titer", "Min viability",
+            "QC", "Disposition",
+        ]]
+        lead_row_indexes: List[int] = []
+        for _, row in comparison_df.iterrows():
+            extra_disposition = row.get("disposition") or row.get("status") or ""
+            comparison_data.append([
+                _short(row.get("batch_number"), 16),
+                _short(row.get("condition_label"), 22),
+                _fmt_num(row.get("peak_vcd_e6_per_ml")),
+                _fmt_num(row.get("final_titer_mg_per_l"), digits=0),
+                _fmt_num(row.get("min_viability_percent"), digits=1),
+                _short(row.get("qc_status"), 10),
+                _short(extra_disposition, 14),
+            ])
+            if bool(row.get("lead_condition")):
+                lead_row_indexes.append(len(comparison_data) - 1)
+        ct = Table(
+            comparison_data,
+            repeatRows=1,
+            colWidths=[
+                0.8 * inch, 1.5 * inch, 0.8 * inch, 0.9 * inch,
+                0.9 * inch, 0.6 * inch, 0.9 * inch,
+            ],
+        )
+        ct.setStyle(_table_style(header=True))
+        highlight_rules = []
+        for row_idx in lead_row_indexes:
+            highlight_rules.extend([
+                ("BACKGROUND", (0, row_idx), (-1, row_idx), colors.HexColor("#fff6dc")),
+                ("LINEABOVE", (0, row_idx), (-1, row_idx), 0.9, colors.HexColor("#a36800")),
+                ("LINEBELOW", (0, row_idx), (-1, row_idx), 0.9, colors.HexColor("#a36800")),
+                ("FONTNAME", (0, row_idx), (-1, row_idx), "Helvetica-Bold"),
+            ])
+        if highlight_rules:
+            ct.setStyle(TableStyle(highlight_rules))
+            flow.append(Paragraph("Lead condition highlighted in gold.", body))
+        flow.append(ct)
+    else:
+        flow.append(Paragraph("No batch comparison data available.", body))
+    flow.append(PageBreak())
 
     # Audit summary page
     flow.append(Paragraph("AUDIT TRAIL", eyebrow))
@@ -816,6 +887,27 @@ def _build_provenance(
     }
 
 
+def _collect_campaign_approvals(db: Session, campaign: Campaign) -> List[CampaignApproval]:
+    try:
+        return (
+            db.query(CampaignApproval)
+            .filter(CampaignApproval.campaign_id == campaign.id)
+            .order_by(CampaignApproval.created_at.asc(), CampaignApproval.id.asc())
+            .all()
+        )
+    except Exception:
+        return []
+
+
+def _approval_verification_dict(approval: CampaignApproval) -> Dict[str, Any]:
+    return {
+        "approved_by": approval.approved_by_name,
+        "role": approval.approval_meaning,
+        "date": _iso(approval.created_at),
+        "comments": approval.comments,
+    }
+
+
 # ---------------------------------------------------------------------------
 # PDF
 # ---------------------------------------------------------------------------
@@ -828,6 +920,7 @@ def _build_pdf(
     offline_df: pd.DataFrame,
     ts_summary_df: pd.DataFrame,
     audit_rows: List[AuditLog],
+    approvals: List[CampaignApproval],
     audit_chain_status: Dict[str, Any],
     audit_csv_sha256: str,
     generated_at: datetime,
@@ -945,6 +1038,34 @@ def _build_pdf(
     s_table = Table(summary_rows, colWidths=[2.0 * inch, 4.2 * inch])
     s_table.setStyle(_table_style(header=False))
     flow.append(s_table)
+
+    flow.append(Spacer(1, 0.22 * inch))
+    flow.append(Paragraph("Campaign Approvals", h2))
+    if approvals:
+        flow.append(Paragraph(
+            "This campaign has been reviewed and approved by the following qualified personnel:",
+            body,
+        ))
+        approval_rows = [["Name", "Role", "Date", "Comments"]]
+        for approval in approvals:
+            approval_rows.append([
+                _short(approval.approved_by_name, 24),
+                _short(approval.approval_meaning, 12),
+                _short(_iso(approval.created_at), 19),
+                _short(approval.comments or "—", 48),
+            ])
+        approvals_table = Table(
+            approval_rows,
+            repeatRows=1,
+            colWidths=[1.5 * inch, 0.9 * inch, 1.3 * inch, 2.5 * inch],
+        )
+        approvals_table.setStyle(_table_style(header=True))
+        flow.append(approvals_table)
+    else:
+        flow.append(Paragraph(
+            "⚠ No approvals recorded. This campaign has not been signed off by a qualified reviewer.",
+            body,
+        ))
     flow.append(PageBreak())
 
     # ----- Batch table ----------------------------------------------------

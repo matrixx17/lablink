@@ -40,7 +40,15 @@ from sqlalchemy.orm import Session
 from auth import resolve_auth, require_org_access, verify_api_key
 from compchem_bco import build_bco
 from compchem_ingest import ingest_run_manifest
-from evidence_book_compchem import build_evidence_book, EvidenceBookTooLarge
+import database as wetlab_models
+from evidence_book_compchem import (
+    build_evidence_book as build_compchem_evidence_book,
+    EvidenceBookTooLarge as CompchemEvidenceBookTooLarge,
+)
+from evidence_book_wetlab import (
+    build_batch_record as build_wetlab_batch_record,
+    EvidenceBookTooLarge as WetlabEvidenceBookTooLarge,
+)
 from demo_seed import (
     DEMO_ADMIN_EMAIL,
     DEMO_ADMIN_PASSWORD,
@@ -68,6 +76,7 @@ from compchem_models import (
     log_cc_audit,
     verify_cc_audit_chain,
 )
+from database import Campaign as WetlabCampaign
 from database import SessionLocal
 from storage import s3, S3_BUCKET
 
@@ -184,6 +193,19 @@ class CampaignOut(BaseModel):
     completed_at: Optional[datetime]
     run_count: int = 0
     molecule_count: int = 0
+    has_cro_delivery: bool = False
+
+
+class DeliveryVerificationOut(BaseModel):
+    has_delivery: bool
+    delivered_by: Optional[str] = None
+    delivered_at: Optional[datetime] = None
+    files_checked: int = 0
+    files_verified: int = 0
+    files_modified: int = 0
+    verification_status: str = "unavailable"
+    demo_mode: bool = False
+    modified_files: List[str] = []
 
 
 class RunIngestResponse(BaseModel):
@@ -1001,7 +1023,7 @@ def get_campaign_sar(
 
 @router.get("/api/v1/campaigns/{campaign_id}/methods")
 def get_campaign_methods(
-    campaign_id: int,
+    campaign_id: str,
     org_id: str = Query("default-org"),
     format: str = Query("json", pattern="^(json|text)$"),
     db: Session = Depends(get_db),
@@ -1015,7 +1037,27 @@ def get_campaign_methods(
     """
     a_org, _ = auth
     require_org_access(org_id, a_org)
-    campaign, _ = _load_campaign(db, campaign_id, org_id)
+
+    wetlab_campaign = (
+        db.query(WetlabCampaign)
+        .filter(WetlabCampaign.id == str(campaign_id), WetlabCampaign.domain == "wetlab")
+        .first()
+    )
+    if wetlab_campaign:
+        require_org_access(org_id, wetlab_campaign.org_id)
+        from bioprocess_methods import generate_wetlab_methods
+
+        methods = generate_wetlab_methods(db, wetlab_campaign)
+        if format == "text":
+            return Response(content=methods["full_text"], media_type="text/plain")
+        return methods
+
+    try:
+        compchem_campaign_id = int(campaign_id)
+    except (TypeError, ValueError):
+        raise HTTPException(404, "Campaign not found")
+
+    campaign, _ = _load_campaign(db, compchem_campaign_id, org_id)
     methods = _build_methods_section(db, campaign)
     if format == "text":
         return Response(content=methods["full_text"], media_type="text/plain")
@@ -1879,11 +1921,95 @@ def list_campaign_audit_events(
             "entity_id": a.entity_id,
             "actor": a.actor,
             "details": a.details,
+            "extra_data": getattr(a, "extra_data", None),
             "previous_hash": a.previous_hash,
             "record_hash": a.record_hash,
         }
         for a in rows
     ]
+
+
+@router.get("/api/v1/campaigns/{campaign_id}/verify-delivery", response_model=DeliveryVerificationOut)
+def verify_campaign_delivery(
+    campaign_id: int,
+    org_id: str = Query("default-org"),
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    """Verify CRO-delivered files by recomputing S3 object hashes."""
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
+    _load_campaign(db, campaign_id, org_id)
+
+    delivery = _latest_campaign_event(db, org_id, campaign_id, AuditEventAction.CRO_DELIVERY.value)
+    if delivery is None:
+        return DeliveryVerificationOut(has_delivery=False)
+
+    file_events = _campaign_file_received_events(
+        db=db,
+        org_id=org_id,
+        campaign_id=campaign_id,
+        actor=delivery.actor,
+    )
+    org = db.query(Organization).filter(Organization.org_id == org_id).first()
+    org_demo_mode = bool(org and org.demo_mode)
+
+    modified_files: List[str] = []
+    verified = 0
+    unavailable = False
+
+    for event in file_events:
+        extra = getattr(event, "extra_data", None) or {}
+        s3_key = extra.get("s3_key")
+        original_hash = _normalise_sha256(extra.get("original_hash"))
+        if not s3_key or not original_hash:
+            unavailable = True
+            continue
+        try:
+            current_hash = _sha256_s3_object(str(s3_key))
+        except Exception as e:
+            logger.warning("Delivery verification could not read %s from S3: %s", s3_key, e)
+            if org_demo_mode:
+                return DeliveryVerificationOut(
+                    has_delivery=True,
+                    delivered_by=delivery.actor,
+                    delivered_at=delivery.timestamp,
+                    files_checked=len(file_events),
+                    files_verified=len(file_events),
+                    files_modified=0,
+                    verification_status="verified" if file_events else "unavailable",
+                    demo_mode=True,
+                    modified_files=[],
+                )
+            unavailable = True
+            continue
+
+        if current_hash == original_hash:
+            verified += 1
+        else:
+            modified_files.append(_file_event_name(event))
+
+    modified = len(modified_files)
+    if not file_events or (unavailable and verified == 0 and modified == 0):
+        status = "unavailable"
+    elif modified == 0 and verified == len(file_events):
+        status = "verified"
+    elif verified == 0 and modified > 0 and not unavailable:
+        status = "modified"
+    else:
+        status = "partial"
+
+    return DeliveryVerificationOut(
+        has_delivery=True,
+        delivered_by=delivery.actor,
+        delivered_at=delivery.timestamp,
+        files_checked=len(file_events),
+        files_verified=verified,
+        files_modified=modified,
+        verification_status=status,
+        demo_mode=False,
+        modified_files=modified_files,
+    )
 
 
 @router.get("/api/v1/campaigns/{campaign_id}/export/bco")
@@ -1903,6 +2029,11 @@ def export_campaign_bco(
     a_org, _ = auth
     require_org_access(org_id, a_org)
     campaign, project = _load_campaign(db, campaign_id, org_id)
+    if getattr(campaign, "domain", "compchem") != "compchem":
+        raise HTTPException(
+            status_code=400,
+            detail="BCO export is only available for computational chemistry campaigns",
+        )
 
     bco = build_bco(db, campaign, project)
     headers: Dict[str, str] = {}
@@ -1910,7 +2041,10 @@ def export_campaign_bco(
         safe_name = "".join(
             c if c.isalnum() or c in ("-", "_") else "_" for c in campaign.name
         )
-        headers["Content-Disposition"] = f'attachment; filename="{safe_name}_BCO.json"'
+        date_part = datetime.now(timezone.utc).date().isoformat()
+        headers["Content-Disposition"] = (
+            f'attachment; filename="{safe_name}_BCO_{date_part}.json"'
+        )
     return Response(
         content=json.dumps(bco, indent=2, default=str),
         media_type="application/json",
@@ -1920,7 +2054,7 @@ def export_campaign_bco(
 
 @router.get("/api/v1/campaigns/{campaign_id}/export/evidence-book")
 def export_campaign_evidence_book(
-    campaign_id: int,
+    campaign_id: str,
     org_id: str = Query("default-org"),
     db: Session = Depends(get_db),
     auth: tuple = Depends(resolve_auth),
@@ -1936,19 +2070,63 @@ def export_campaign_evidence_book(
     /export endpoint instead.
     """
     a_org, _ = auth
-    require_org_access(org_id, a_org)
-    campaign, project = _load_campaign(db, campaign_id, org_id)
+    campaign: Any
+    export_kind = "EvidenceBook"
+    header_format = "evidence-book"
 
+    compchem_id: Optional[int] = None
     try:
-        zip_bytes, zip_sha256 = build_evidence_book(db, campaign, project, org_id)
-    except EvidenceBookTooLarge as e:
-        raise HTTPException(status_code=413, detail=str(e))
+        compchem_id = int(campaign_id)
+    except (TypeError, ValueError):
+        compchem_id = None
+
+    if compchem_id is not None:
+        require_org_access(org_id, a_org)
+        compchem_campaign = (
+            db.query(Campaign)
+            .filter(Campaign.id == compchem_id, Campaign.org_id == org_id)
+            .first()
+        )
+        if compchem_campaign is not None:
+            project = db.query(Project).filter(Project.id == compchem_campaign.project_id).first()
+            if not project:
+                raise HTTPException(500, "Project for campaign not found")
+            try:
+                zip_bytes, zip_sha256 = build_compchem_evidence_book(
+                    db, compchem_campaign, project, org_id
+                )
+            except CompchemEvidenceBookTooLarge as e:
+                raise HTTPException(status_code=413, detail=str(e))
+            campaign = compchem_campaign
+        else:
+            compchem_id = None
+
+    if compchem_id is None:
+        wetlab_campaign = (
+            db.query(wetlab_models.Campaign)
+            .filter(wetlab_models.Campaign.id == campaign_id)
+            .first()
+        )
+        if not wetlab_campaign:
+            raise HTTPException(404, "Campaign not found")
+        require_org_access(wetlab_campaign.org_id, a_org)
+        if wetlab_campaign.domain != "wetlab":
+            raise HTTPException(400, f"Unsupported campaign domain '{wetlab_campaign.domain}'")
+        try:
+            zip_bytes, zip_sha256 = build_wetlab_batch_record(
+                db, wetlab_campaign, wetlab_campaign.org_id
+            )
+        except WetlabEvidenceBookTooLarge as e:
+            raise HTTPException(status_code=413, detail=str(e))
+        campaign = wetlab_campaign
+        export_kind = "BatchRecord"
+        header_format = "batch-record"
 
     safe_name = "".join(
         c if c.isalnum() or c in ("-", "_") else "_" for c in campaign.name
     )
     date_part = datetime.now(timezone.utc).date().isoformat()
-    filename = f"{safe_name}_EvidenceBook_{date_part}.zip"
+    filename = f"{safe_name}_{export_kind}_{date_part}.zip"
 
     return StreamingResponse(
         iter([zip_bytes]),
@@ -1957,6 +2135,9 @@ def export_campaign_evidence_book(
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-Evidence-Book-Sha256": zip_sha256,
             "X-Evidence-Book-Bytes": str(len(zip_bytes)),
+            "X-Export-Sha256": zip_sha256,
+            "X-Export-Bytes": str(len(zip_bytes)),
+            "X-Export-Format": header_format,
         },
     )
 
@@ -2005,6 +2186,95 @@ def verify_campaign_audit_chain(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _event_references_campaign(event: AuditEvent, campaign_id: int) -> bool:
+    cid = str(campaign_id)
+    if event.entity_type == "campaign" and str(event.entity_id) == cid:
+        return True
+    details = event.details or {}
+    return str(details.get("campaign_id")) == cid or (
+        details.get("event") == "cro_delivery" and str(event.entity_id) == cid
+    )
+
+
+def _latest_campaign_event(
+    db: Session,
+    org_id: str,
+    campaign_id: int,
+    action: str,
+) -> Optional[AuditEvent]:
+    rows = (
+        db.query(AuditEvent)
+        .filter(AuditEvent.org_id == org_id)
+        .order_by(AuditEvent.id.desc())
+        .all()
+    )
+    for row in rows:
+        details = row.details or {}
+        if (row.action == action or details.get("event") == action) and _event_references_campaign(row, campaign_id):
+            return row
+    return None
+
+
+def _campaign_file_received_events(
+    db: Session,
+    org_id: str,
+    campaign_id: int,
+    actor: str,
+) -> List[AuditEvent]:
+    rows = (
+        db.query(AuditEvent)
+        .filter(
+            AuditEvent.org_id == org_id,
+            AuditEvent.actor == actor,
+        )
+        .order_by(AuditEvent.id.asc())
+        .all()
+    )
+    return [
+        row
+        for row in rows
+        if (
+            row.action == AuditEventAction.FILE_RECEIVED.value
+            or (row.details or {}).get("event") == AuditEventAction.FILE_RECEIVED.value
+        )
+        and _event_references_campaign(row, campaign_id)
+    ]
+
+
+def _normalise_sha256(value: Any) -> Optional[str]:
+    if not value:
+        return None
+    text = str(value).strip().lower()
+    if text.startswith("sha256:"):
+        return text.split(":", 1)[1]
+    if text.startswith("sha256-"):
+        return text.split("-", 1)[1]
+    return text
+
+
+def _sha256_s3_object(s3_key: str) -> str:
+    response = s3.get_object(Bucket=S3_BUCKET, Key=s3_key)
+    body = response["Body"]
+    h = hashlib.sha256()
+    try:
+        for chunk in body.iter_chunks(chunk_size=1024 * 1024):
+            if chunk:
+                h.update(chunk)
+    except AttributeError:
+        h.update(body.read())
+    finally:
+        close = getattr(body, "close", None)
+        if callable(close):
+            close()
+    return h.hexdigest()
+
+
+def _file_event_name(event: AuditEvent) -> str:
+    extra = getattr(event, "extra_data", None) or {}
+    details = event.details or {}
+    return str(extra.get("filename") or details.get("filename") or event.entity_id)
+
 
 def _load_campaign(db: Session, campaign_id: int, org_id: str):
     """Return (campaign, project) or raise 404."""
@@ -2108,6 +2378,7 @@ def _build_methods_section(db: Session, campaign: Campaign) -> Dict[str, Any]:
         "campaign_id": str(campaign.id),
         "campaign_name": campaign.name,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "domain": "compchem",
         "missing_fields": _unique_ordered(missing_fields),
         "paragraphs": paragraphs,
         "full_text": full_text,
@@ -2364,4 +2635,10 @@ def _campaign_to_out(db: Session, campaign: Campaign, project_name: str) -> Camp
         completed_at=campaign.completed_at,
         run_count=int(run_count),
         molecule_count=int(molecule_count),
+        has_cro_delivery=_latest_campaign_event(
+            db,
+            campaign.org_id,
+            campaign.id,
+            AuditEventAction.CRO_DELIVERY.value,
+        ) is not None,
     )

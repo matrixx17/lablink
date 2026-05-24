@@ -11,6 +11,7 @@ from database import (
     RunRecord, RunStatus, FileRecord, MeasurementSeries, DataKind,
     AuditAction, EntityType, log_audit,
 )
+from assay_qc import assay_qc_summary
 from bioprocess_qc import bioprocess_qc_summary, is_bioprocess_instrument
 from qc import qc_summary
 from timeseries_align import (
@@ -167,6 +168,7 @@ def run_qc_for_manifest(
     org_id: str,
     instrument: Optional[str],
     db: Session,
+    parsed_metadata: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     instrument_key = instrument or "unknown"
     try:
@@ -176,6 +178,15 @@ def run_qc_for_manifest(
 
     if is_bioprocess_instrument(instrument):
         return bioprocess_qc_summary(stats, instrument=instrument, historical_baselines=historical)
+
+    assay_format = (parsed_metadata or {}).get("assay_format")
+    if assay_format and assay_format != "unknown":
+        return assay_qc_summary(
+            stats=stats,
+            assay_format=assay_format,
+            precomputed_findings=(parsed_metadata or {}).get("assay_qc"),
+            historical_baselines=historical,
+        )
 
     return qc_summary(stats=stats, historical_baselines=historical)
 
@@ -202,12 +213,18 @@ def aggregate_run_stats(db: Session, run_id: int) -> Dict[str, Any]:
     return stats
 
 
-def update_run_qc(db: Session, run_id: int, org_id: str, instrument: Optional[str]) -> Dict[str, Any]:
+def update_run_qc(
+    db: Session,
+    run_id: int,
+    org_id: str,
+    instrument: Optional[str],
+    parsed_metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     stats = aggregate_run_stats(db, run_id)
     if not stats:
         return {"overall_status": "unknown", "summary": "No measurement series on run."}
 
-    qc = run_qc_for_manifest(stats, org_id, instrument, db)
+    qc = run_qc_for_manifest(stats, org_id, instrument, db, parsed_metadata=parsed_metadata)
     run = db.query(RunRecord).filter(RunRecord.id == run_id).first()
     if run:
         run.qc = qc
