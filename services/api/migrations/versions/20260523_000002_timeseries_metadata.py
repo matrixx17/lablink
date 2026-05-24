@@ -1,7 +1,7 @@
 """Add metadata JSONB to timeseries_data for chromatography context
 
-Revision ID: 004_timeseries_metadata
-Revises: 003_wetlab
+Revision ID: 010_timeseries_metadata
+Revises: 009_wetlab
 Create Date: 2026-05-23
 """
 from typing import Sequence, Union
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from sqlalchemy import inspect
 from sqlalchemy.dialects import postgresql
 
-revision: str = "004_timeseries_metadata"
-down_revision: Union[str, None] = "003_wetlab"
+revision: str = "010_timeseries_metadata"
+down_revision: Union[str, None] = "009_wetlab"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

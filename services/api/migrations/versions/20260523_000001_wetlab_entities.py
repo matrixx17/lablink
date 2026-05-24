@@ -1,7 +1,7 @@
 """Wet lab entities: campaigns, batches, timeseries_data, offline_samples
 
-Revision ID: 003_wetlab
-Revises: 002_bioprocess
+Revision ID: 009_wetlab
+Revises: 008_campaign_lead_molecule
 Create Date: 2026-05-22
 """
 from typing import Sequence, Union
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from sqlalchemy import inspect
 from sqlalchemy.dialects import postgresql
 
-revision: str = "003_wetlab"
-down_revision: Union[str, None] = "002_bioprocess"
+revision: str = "009_wetlab"
+down_revision: Union[str, None] = "008_campaign_lead_molecule"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
