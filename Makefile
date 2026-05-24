@@ -204,6 +204,16 @@ wetlab-ui-build: ## Build wet-lab React dashboard
 wetlab-seed: ## Seed demo wet lab campaign (requires Postgres on localhost:5432)
 	POSTGRES_HOST=localhost python scripts/seed_demo_wetlab.py
 
+demo-qa-install: ## Install Playwright dependencies for demo screenshot QA
+	cd frontend/demo-qa && npm install && npx playwright install --with-deps chromium
+
+demo-screenshots: ## Run Playwright tour QA against the running stack ($DEMO_BASE_URL or http://localhost:3000)
+	@echo "$(CYAN)Running comp-chem and wet-lab tour screenshot specs...$(NC)"
+	cd frontend/demo-qa && npx playwright test
+
+demo-share-report: ## Print tracked share-link opens (DATABASE_URL must point at the demo DB)
+	python scripts/demo_share_report.py
+
 lint: ## Run linting
 	@echo "$(GREEN)Running linter...$(NC)"
 	docker compose exec api ruff check .
