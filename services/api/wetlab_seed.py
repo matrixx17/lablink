@@ -14,9 +14,11 @@ from database import (
     AuditLog,
     Batch,
     Campaign,
+    CampaignApproval,
     EntityType,
     OfflineSample,
     TimeseriesData,
+    User,
     log_audit,
 )
 from wetlab_timeseries import series_metadata_for_parameter
@@ -31,6 +33,31 @@ OFFLINE_N = DURATION_DAYS
 
 INOCULATION_DATE = datetime(2024, 3, 18, 9, 0, tzinfo=timezone.utc)
 DELIVERY_DATE = datetime(2024, 4, 14, 10, 0, tzinfo=timezone.utc)
+APPROVAL_DATE = DELIVERY_DATE + timedelta(hours=4)
+
+DEMO_USER_EMAIL_AUTHOR = "maria.santos@demo.lablink.io"
+DEMO_USER_EMAIL_APPROVER = "alex.kumar@demo.lablink.io"
+
+DEMO_APPROVALS = [
+    {
+        "email": DEMO_USER_EMAIL_AUTHOR,
+        "name": "Dr. Maria Santos, VP Process Development",
+        "role": "author",
+        "comments": (
+            "Authored the Campaign 4 lead-condition analysis. Batch_004C "
+            "delivered 3× titer over baseline with a clean QC profile."
+        ),
+    },
+    {
+        "email": DEMO_USER_EMAIL_APPROVER,
+        "name": "Dr. Alex Kumar, Head of Quality",
+        "role": "approver",
+        "comments": (
+            "Reviewed all three batches, DO excursion acknowledgment, "
+            "and QC summary. Campaign approved for scale-up."
+        ),
+    },
+]
 
 
 def _ts_seconds() -> np.ndarray:
@@ -301,6 +328,16 @@ def delete_wetlab_demo(db: Session) -> None:
             AuditLog.entity_id.in_(entity_ids),
         ).delete(synchronize_session=False)
 
+    db.query(CampaignApproval).filter(
+        CampaignApproval.campaign_id.in_(campaign_ids)
+    ).delete(synchronize_session=False)
+
+    demo_emails = [DEMO_USER_EMAIL_AUTHOR, DEMO_USER_EMAIL_APPROVER]
+    db.query(User).filter(
+        User.org_id == DEMO_ORG_ID,
+        User.email.in_(demo_emails),
+    ).delete(synchronize_session=False)
+
     db.query(Campaign).filter(Campaign.id.in_(campaign_ids)).delete(synchronize_session=False)
     db.commit()
 
@@ -463,6 +500,44 @@ def seed_wetlab_demo(db: Session) -> Dict[str, Any]:
         },
         db=db,
     )
+
+    for spec in DEMO_APPROVALS:
+        user = User(
+            id=str(uuid.uuid4()),
+            org_id=DEMO_ORG_ID,
+            email=spec["email"],
+            name=spec["name"],
+        )
+        db.add(user)
+        db.flush()
+        db.add(
+            CampaignApproval(
+                id=str(uuid.uuid4()),
+                campaign_id=campaign.id,
+                approved_by_user_id=user.id,
+                approved_by_name=spec["name"],
+                approval_meaning=spec["role"],
+                comments=spec["comments"],
+                created_at=APPROVAL_DATE,
+            )
+        )
+        log_audit(
+            action=AuditAction.CAMPAIGN_APPROVED,
+            entity_type=EntityType.CAMPAIGN,
+            entity_id=campaign.id,
+            actor=spec["email"],
+            org_id=DEMO_ORG_ID,
+            details={
+                "event": "campaign_approved",
+                "campaign_id": campaign.id,
+                "approval_meaning": spec["role"],
+                "approved_by_name": spec["name"],
+                "approved_by_user_id": user.id,
+                "comments": spec["comments"],
+                "message": f"{spec['name']} signed off as {spec['role']}.",
+            },
+            db=db,
+        )
 
     db.commit()
     return {"campaign_id": campaign.id, "batch_ids": batch_ids}

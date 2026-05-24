@@ -41,6 +41,31 @@ DEMO_CONTEXT = (
     "lead candidate."
 )
 
+# A handful of representative delivery artifacts surfaced as file_received audit
+# events. Hashes are deterministic so the BCO/Evidence-Book outputs stay byte-stable
+# between demo resets; the S3 objects themselves are not created (the
+# verify-delivery route falls back to demo_mode=true when fetch fails).
+DEMO_DELIVERY_FILES = (
+    ("dock_AC-007_out.pdbqt", "delivery_round3_dock_AC-007"),
+    ("dock_AC-014_out.pdbqt", "delivery_round3_dock_AC-014"),
+    ("delivery_manifest_round3.json", "delivery_round3_manifest"),
+)
+
+DEMO_APPROVALS_METADATA = [
+    {
+        "name": "Dr. John Doe",
+        "role": "author",
+        "date": "2026-05-22T14:30:00+00:00",
+        "comments": "Authored the round-3 lead-optimization analysis; AC-007 carries the strongest combined docking + MD + DFT signal.",
+    },
+    {
+        "name": "Dr. Priya Raman",
+        "role": "reviewer",
+        "date": "2026-05-22T16:05:00+00:00",
+        "comments": "Reviewed all 10 docking poses and the MD/DFT follow-ups. Methods and parameter logs are complete; concur with AC-007 nomination.",
+    },
+]
+
 
 def hash_demo_password(password: str) -> str:
     """PBKDF2 hash for the demo admin password."""
@@ -138,6 +163,8 @@ def _seed_demo_data(db: Session) -> None:
             "cro_partner": "Bio Labs",
             "delivery_credential": "cro_upload_bl_egfr_001",
             "extra_params": {"delivery_date": "2026-05-22"},
+            "approvals": DEMO_APPROVALS_METADATA,
+            "is_approved": True,
         },
         started_at=datetime.now(timezone.utc),
     )
@@ -190,6 +217,29 @@ def _seed_demo_data(db: Session) -> None:
             run_id=result["run_id"],
             actor="cro_upload_bl_egfr_001",
             message=f"Docking run completed for {name} and delivered by Bio Labs.",
+        )
+
+    for offset_seconds, (filename, key_suffix) in enumerate(DEMO_DELIVERY_FILES):
+        s3_key = f"demo/{DEMO_ORG_ID}/{campaign.name}/{filename}"
+        original_hash = hashlib.sha256(f"{campaign.id}:{key_suffix}".encode("utf-8")).hexdigest()
+        _add_audit_event(
+            db=db,
+            org_id=DEMO_ORG_ID,
+            action="file_received",
+            entity_type="file",
+            entity_id=s3_key,
+            actor="cro_upload_bl_egfr_001",
+            details={
+                "campaign_id": campaign.id,
+                "filename": filename,
+                "delivered_by": "Bio Labs",
+            },
+            extra_data={
+                "s3_key": s3_key,
+                "original_hash": original_hash,
+                "filename": filename,
+            },
+            timestamp=datetime(2026, 5, 22, 14, 55, offset_seconds, tzinfo=timezone.utc),
         )
 
     _add_audit_event(
@@ -276,6 +326,24 @@ def _seed_demo_data(db: Session) -> None:
                 extra_metadata={"molecule_external_id": external_id},
             ))
     db.commit()
+
+    for approval in DEMO_APPROVALS_METADATA:
+        _add_audit_event(
+            db=db,
+            org_id=DEMO_ORG_ID,
+            action="campaign_approved",
+            entity_type="campaign",
+            entity_id=str(campaign.id),
+            actor=approval["name"],
+            details={
+                "campaign_id": campaign.id,
+                "approval_meaning": approval["role"],
+                "approved_by_name": approval["name"],
+                "comments": approval["comments"],
+                "message": f"{approval['name']} signed off as {approval['role']}.",
+            },
+            timestamp=datetime.fromisoformat(approval["date"]),
+        )
 
     lead = (
         db.query(Molecule)
@@ -481,6 +549,7 @@ def _add_audit_event(
     actor: str,
     details: Dict[str, Any],
     timestamp: datetime,
+    extra_data: Dict[str, Any] | None = None,
 ) -> AuditEvent:
     previous_record = (
         db.query(AuditEvent)
@@ -507,6 +576,7 @@ def _add_audit_event(
         entity_id=entity_id,
         actor=actor,
         details=details,
+        extra_data=extra_data,
         previous_hash=previous_hash,
         record_hash=record_hash,
     )
