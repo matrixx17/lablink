@@ -77,7 +77,7 @@ export default function MethodsExportPage() {
         actions={<SecondaryButton as="a" href={withOrg(`/campaigns/${id}`, orgId)}>Back to campaign</SecondaryButton>}
       />
 
-      <Card className={styles.methodsEditorCard}>
+      <Card className={styles.methodsEditorCard} data-tour={isWetlab ? "wetlab-methods-export" : "compchem-methods-export"}>
         <div className={styles.methodsActions}>
           <PrimaryButton onClick={copyText}>
             {copied ? "Copied!" : "Copy to clipboard"}

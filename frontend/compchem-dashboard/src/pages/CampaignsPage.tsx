@@ -83,6 +83,7 @@ export default function CampaignsPage() {
       ) : null}
 
       {rows.length > 0 ? (
+        <div data-tour="compchem-campaigns-list">
         <DataTable>
           <thead>
             <tr>
@@ -110,6 +111,7 @@ export default function CampaignsPage() {
             ))}
           </tbody>
         </DataTable>
+        </div>
       ) : null}
     </div>
   );

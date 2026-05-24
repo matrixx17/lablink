@@ -89,6 +89,123 @@
   transform: translateY(-0.5px);
 }
 
+.navTourButton {
+  position: relative;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  transition: color 100ms ease, background 100ms ease;
+}
+
+.navTourButton:hover {
+  color: var(--ink);
+  background: var(--bg-elev-2);
+}
+
+.floatingTourButton {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 25;
+  border: 1px solid var(--rule-2);
+  border-radius: 999px;
+  background: var(--bg-elev);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 500;
+  padding: 10px 16px;
+  box-shadow: 0 14px 40px rgba(20, 24, 31, 0.12);
+}
+
+.floatingTourButton:hover {
+  border-color: var(--ink);
+}
+
+.tourModalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(20, 24, 31, 0.32);
+}
+
+.tourModalCard {
+  width: min(520px, 100%);
+  border: 1px solid var(--rule-2);
+  border-radius: 14px;
+  background: var(--bg-elev);
+  padding: 34px 36px;
+  box-shadow: 0 24px 80px rgba(20, 24, 31, 0.16);
+}
+
+.tourModalCard h2 {
+  font-family: var(--display);
+  font-size: 36px;
+  font-weight: 400;
+  line-height: 1.04;
+  letter-spacing: -0.025em;
+}
+
+.tourModalActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 24px;
+}
+
+.tourModalPrimary,
+.tourModalSecondary {
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 500;
+  padding: 10px 16px;
+  text-decoration: none;
+}
+
+.tourModalPrimary {
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.tourModalPrimary:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.tourModalSecondary {
+  border: 1px solid var(--rule-2);
+  background: var(--bg-elev);
+  color: var(--ink);
+}
+
+.tourModalSecondary:hover {
+  border-color: var(--ink);
+}
+
+.tourModalFootnote {
+  margin: 20px 0 0;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+.tourModalFootnote a {
+  color: var(--ink);
+  border-bottom: 1px solid var(--rule-3);
+}
+
 .navGroupLabel {
   font-family: var(--body);
   font-size: 10.5px;
@@ -116,6 +233,69 @@
 .orgBox input {
   font-family: var(--mono);
   font-size: 12.5px;
+}
+
+.demoChip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid #d7a948;
+  border-radius: 999px;
+  background: #fff7df;
+  color: #6b4b00;
+  font-size: 11.5px;
+  line-height: 1.2;
+}
+
+.demoChipExpiring {
+  border-color: #cf5d4b;
+  background: #fff0ed;
+  color: #8b2319;
+}
+
+.demoChip button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.demoShareNav {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--bg-mute);
+}
+
+.demoShareNav button {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--rule-2);
+  border-radius: 999px;
+  background: var(--bg-elev);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.demoShareNav button:hover {
+  border-color: var(--ink);
+}
+
+.demoShareNav p {
+  margin: 8px 0 0;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.4;
 }
 
 .footerNote {
@@ -173,6 +353,7 @@
     flex-direction: row;
     margin: 0;
   }
+  .navTourButton { width: auto; }
   .navGroupLabel, .footerNote, .brandSub { display: none; }
   .orgBox { margin-top: 0; flex-direction: row; align-items: center; }
   .orgBox label { font-size: 11px; }
@@ -185,4 +366,47 @@
   .sidebar { display: none; }
   .main { padding: 0; }
   .demoBanner { display: none; }
+}
+
+/* ---- Vertical switcher pill --------------------------------------- */
+
+.verticalSwitcher {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 3px;
+  background: var(--bg);
+  align-self: flex-start;
+  gap: 0;
+}
+
+.verticalSwitcher a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-decoration: none;
+  font-weight: 500;
+  transition: background 120ms, color 120ms;
+}
+
+.verticalSwitcherActive {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.verticalSwitcherInactive {
+  color: var(--ink-3);
+}
+
+.verticalSwitcherInactive:hover {
+  color: var(--ink);
+}
+
+@media (max-width: 980px) {
+  .verticalSwitcher { align-self: center; }
 }

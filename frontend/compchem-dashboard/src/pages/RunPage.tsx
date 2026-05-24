@@ -65,7 +65,7 @@ export default function RunPage() {
           ⚠ Metadata for this run was inferred from the directory path. Verify the details below are correct.
         </div>
       ) : null}
-      <div className={styles.stats}>
+      <div className={styles.stats} data-tour="compchem-run-detail">
         <Card><StatusBadge status={run.status} /></Card>
         <Card><StatusBadge status={(run.qc as { overall_status?: string } | null)?.overall_status} /></Card>
         <Card>Wall time: {run.wall_time_s ? `${fmtNumber(run.wall_time_s / 60)} min` : "-"}</Card>

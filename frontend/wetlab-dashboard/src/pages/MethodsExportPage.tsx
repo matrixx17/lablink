@@ -135,14 +135,16 @@ export default function MethodsExportPage() {
         </div>
       ) : null}
 
-      {orderedParagraphs
-        .filter(([, body]) => body && body.trim().length > 0)
-        .map(([title, body]) => (
-          <section key={title} style={{ marginBottom: 24 }}>
-            <SectionRule eyebrow="Paragraph" title={title} />
-            <p style={{ maxWidth: "76ch", color: "var(--ink)" }}>{body}</p>
-          </section>
-        ))}
+      <div data-tour="wetlab-methods-export">
+        {orderedParagraphs
+          .filter(([, body]) => body && body.trim().length > 0)
+          .map(([title, body]) => (
+            <section key={title} style={{ marginBottom: 24 }}>
+              <SectionRule eyebrow="Paragraph" title={title} />
+              <p style={{ maxWidth: "76ch", color: "var(--ink)" }}>{body}</p>
+            </section>
+          ))}
+      </div>
 
       {equipmentRows.length > 0 ? (
         <>
