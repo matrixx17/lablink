@@ -1,14 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import {
-  CartesianGrid,
-  ResponsiveContainer,
-  Scatter,
-  ScatterChart,
-  Tooltip,
-  XAxis,
-  YAxis
-} from "recharts";
 import { api, Campaign, SarMolecule } from "../api/client";
 import { useOrgId, withOrg } from "../components/Layout";
 import { Card, EmptyState, ErrorBox, PageHeader, StatusBadge } from "../components/ui";
@@ -27,6 +18,10 @@ type PlotPoint = {
   y: number;
   qc: string;
 };
+
+const CHART_WIDTH = 720;
+const CHART_HEIGHT = 420;
+const CHART_MARGIN = { top: 28, right: 34, bottom: 62, left: 72 };
 
 function metricLabel(metric: string) {
   return metric
@@ -116,6 +111,29 @@ export default function SarScatterPage() {
       }));
   }, [molecules, xMetric, yMetric]);
 
+  const chart = useMemo(() => {
+    if (!points.length) return null;
+    const xValues = points.map((point) => point.x);
+    const yValues = points.map((point) => point.y);
+    const makeDomain = (values: number[]) => {
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      if (min === max) return [min - 1, max + 1] as const;
+      const pad = (max - min) * 0.12;
+      return [min - pad, max + pad] as const;
+    };
+    const [xMin, xMax] = makeDomain(xValues);
+    const [yMin, yMax] = makeDomain(yValues);
+    const plotWidth = CHART_WIDTH - CHART_MARGIN.left - CHART_MARGIN.right;
+    const plotHeight = CHART_HEIGHT - CHART_MARGIN.top - CHART_MARGIN.bottom;
+    const xScale = (value: number) =>
+      CHART_MARGIN.left + ((value - xMin) / (xMax - xMin)) * plotWidth;
+    const yScale = (value: number) =>
+      CHART_MARGIN.top + plotHeight - ((value - yMin) / (yMax - yMin)) * plotHeight;
+    const ticks = Array.from({ length: 5 }, (_, index) => index / 4);
+    return { xMin, xMax, yMin, yMax, plotWidth, plotHeight, xScale, yScale, ticks };
+  }, [points]);
+
   const selectedPoint = useMemo(
     () => {
       const plotted = points.find((p) => p.molecule.id === selectedId);
@@ -200,7 +218,7 @@ export default function SarScatterPage() {
         <EmptyState>No molecule metrics available yet for this campaign.</EmptyState>
       ) : (
         <div className={styles.sarLayout}>
-          <Card className={styles.sarChartCard}>
+          <Card className={styles.sarChartCard} data-tour="compchem-sar-scatter">
             {campaign?.lead_molecule_id ? (
               <div className={styles.sarStory}>
                 This chart shows docking scores vs. molecular weight for all 10 compounds screened by Bio Labs. The starred point (AC-007) was selected as the lead candidate. Green = QC pass, Amber = warn, Red = fail.
@@ -212,108 +230,90 @@ export default function SarScatterPage() {
               </div>
             ) : (
               <div className={styles.chart}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <ScatterChart margin={{ top: 18, right: 28, bottom: 48, left: 44 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis
-                      type="number"
-                      dataKey="x"
-                      name={metricLabel(xMetric)}
-                      label={{ value: metricLabel(xMetric), position: "bottom", offset: 18 }}
-                      tick={{ fill: "#475569", fontSize: 12 }}
+                {chart ? (
+                  <svg
+                    viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+                    role="img"
+                    aria-label={`${metricLabel(xMetric)} versus ${metricLabel(yMetric)} scatter plot`}
+                  >
+                    <rect
+                      x={CHART_MARGIN.left}
+                      y={CHART_MARGIN.top}
+                      width={chart.plotWidth}
+                      height={chart.plotHeight}
+                      fill="var(--bg-mute)"
+                      stroke="var(--rule)"
                     />
-                    <YAxis
-                      type="number"
-                      dataKey="y"
-                      name={metricLabel(yMetric)}
-                      label={{ value: metricLabel(yMetric), angle: -90, position: "left", offset: 20 }}
-                      tick={{ fill: "#475569", fontSize: 12 }}
-                    />
-                    <Tooltip
-                      cursor={{ strokeDasharray: "3 3" }}
-                      content={({ active, payload }) => {
-                        if (!active || !payload?.[0]) return null;
-                        const point = payload[0].payload as PlotPoint;
-                        return (
-                          <div className={styles.sarTooltip}>
-                            <strong>{displayName(point.molecule)}</strong>
-                            <div className={styles.tooltipMuted}>
-                              {truncSmiles(point.molecule.smiles || point.molecule.canonical_smiles)}
-                            </div>
-                            <div className={styles.tooltipRow}>
-                              <span>{metricLabel(xMetric)}</span>
-                              <strong>{formatValue(point.x)}</strong>
-                            </div>
-                            <div className={styles.tooltipRow}>
-                              <span>{metricLabel(yMetric)}</span>
-                              <strong>{formatValue(point.y)}</strong>
-                            </div>
-                            <div className={styles.tooltipRow}>
-                              <span>QC</span>
-                              <strong>{point.qc || "unknown"}</strong>
-                            </div>
-                            <div className={styles.tooltipHint}>Click to pin details →</div>
-                          </div>
-                        );
-                      }}
-                    />
-                    <Scatter
-                      data={points}
-                      isAnimationActive={false}
-                      shape={(props: any) => {
-                        const payload = props?.payload as PlotPoint | undefined;
-                        const isSelected = payload?.molecule.id === selectedId;
-                        const isLead = Boolean(
-                          highlightLead &&
-                          campaign?.lead_molecule_id &&
-                          payload?.molecule.id === campaign.lead_molecule_id
-                        );
-                        const color = qcColor(payload?.qc);
-                        const size = isLead ? 10 : 6;
-                        return (
-                          <g>
-                            {isSelected ? (
-                              <circle
-                                cx={props.cx}
-                                cy={props.cy}
-                                r={isLead ? 15 : 11}
-                                fill="none"
-                                stroke={color}
-                                strokeOpacity={0.5}
-                                strokeWidth={2}
-                              />
-                            ) : null}
-                            {isLead ? (
-                              <polygon
-                                points={starPoints(props.cx, props.cy, size, size * 0.45)}
-                                fill={color}
-                                stroke="#0f172a"
-                                strokeWidth={1.8}
-                                style={{ cursor: "pointer" }}
-                              />
-                            ) : (
-                              <circle
-                                cx={props.cx}
-                                cy={props.cy}
-                                r={isSelected ? 7 : 6}
-                                fill={color}
-                                stroke="#ffffff"
-                                strokeWidth={1.5}
-                                style={{ cursor: "pointer", transition: "r 120ms ease-out" }}
-                              />
-                            )}
-                          </g>
-                        );
-                      }}
-                      onClick={(point: any) => {
-                        const payload = point?.payload as PlotPoint | undefined;
-                        if (payload?.molecule?.id) {
-                          setSelectedId(payload.molecule.id);
-                        }
-                      }}
-                    />
-                  </ScatterChart>
-                </ResponsiveContainer>
+                    {chart.ticks.map((tick) => {
+                      const x = CHART_MARGIN.left + tick * chart.plotWidth;
+                      const y = CHART_MARGIN.top + tick * chart.plotHeight;
+                      const xValue = chart.xMin + tick * (chart.xMax - chart.xMin);
+                      const yValue = chart.yMax - tick * (chart.yMax - chart.yMin);
+                      return (
+                        <g key={tick}>
+                          <line x1={x} y1={CHART_MARGIN.top} x2={x} y2={CHART_MARGIN.top + chart.plotHeight} stroke="var(--rule)" />
+                          <line x1={CHART_MARGIN.left} y1={y} x2={CHART_MARGIN.left + chart.plotWidth} y2={y} stroke="var(--rule)" />
+                          <text x={x} y={CHART_HEIGHT - 28} textAnchor="middle" className={styles.svgAxisTick}>
+                            {formatValue(xValue)}
+                          </text>
+                          <text x={CHART_MARGIN.left - 12} y={y + 4} textAnchor="end" className={styles.svgAxisTick}>
+                            {formatValue(yValue)}
+                          </text>
+                        </g>
+                      );
+                    })}
+                    <text x={CHART_MARGIN.left + chart.plotWidth / 2} y={CHART_HEIGHT - 8} textAnchor="middle" className={styles.svgAxisLabel}>
+                      {metricLabel(xMetric)}
+                    </text>
+                    <text
+                      x={18}
+                      y={CHART_MARGIN.top + chart.plotHeight / 2}
+                      textAnchor="middle"
+                      className={styles.svgAxisLabel}
+                      transform={`rotate(-90 18 ${CHART_MARGIN.top + chart.plotHeight / 2})`}
+                    >
+                      {metricLabel(yMetric)}
+                    </text>
+                    {points.map((point) => {
+                      const cx = chart.xScale(point.x);
+                      const cy = chart.yScale(point.y);
+                      const isSelected = point.molecule.id === selectedId;
+                      const isLead = Boolean(
+                        highlightLead &&
+                        campaign?.lead_molecule_id &&
+                        point.molecule.id === campaign.lead_molecule_id
+                      );
+                      const color = qcColor(point.qc);
+                      return (
+                        <g
+                          key={point.molecule.id}
+                          role="button"
+                          tabIndex={0}
+                          className={styles.svgScatterPoint}
+                          onClick={() => setSelectedId(point.molecule.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setSelectedId(point.molecule.id);
+                            }
+                          }}
+                        >
+                          <title>
+                            {displayName(point.molecule)}: {metricLabel(xMetric)} {formatValue(point.x)}, {metricLabel(yMetric)} {formatValue(point.y)}
+                          </title>
+                          {isSelected ? (
+                            <circle cx={cx} cy={cy} r={isLead ? 15 : 11} fill="none" stroke={color} strokeOpacity={0.45} strokeWidth={2} />
+                          ) : null}
+                          {isLead ? (
+                            <polygon points={starPoints(cx, cy, 10, 4.5)} fill={color} stroke="var(--ink)" strokeWidth={1.8} />
+                          ) : (
+                            <circle cx={cx} cy={cy} r={isSelected ? 7 : 6} fill={color} stroke="#ffffff" strokeWidth={1.5} />
+                          )}
+                        </g>
+                      );
+                    })}
+                  </svg>
+                ) : null}
               </div>
             )}
 

@@ -10,12 +10,13 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
-    "typescript": "latest",
     "react": "latest",
     "react-dom": "latest",
     "react-router-dom": "latest",
-    "recharts": "latest"
+    "recharts": "latest",
+    "shepherd.js": "^15.2.2",
+    "typescript": "latest",
+    "vite": "latest"
   },
   "devDependencies": {
     "@types/react": "latest",

@@ -1,13 +1,14 @@
 FROM node:20-alpine
 
-WORKDIR /app
+WORKDIR /app/compchem-dashboard
 
-COPY package.json ./
-COPY package-lock.json* ./
+COPY compchem-dashboard/package.json ./
+COPY compchem-dashboard/package-lock.json* ./
 
 RUN npm install
 
-COPY . .
+COPY compchem-dashboard ./
+COPY wetlab-dashboard ../wetlab-dashboard
 
 EXPOSE 5173
 

@@ -123,8 +123,8 @@ services:
   # ----------------------------------------
   frontend:
     build:
-      context: ./frontend/compchem-dashboard
-      dockerfile: Dockerfile
+      context: ./frontend
+      dockerfile: compchem-dashboard/Dockerfile
     container_name: lablink-frontend
     ports:
       - "3000:5173"
@@ -132,8 +132,9 @@ services:
       - VITE_API_URL=http://localhost:8000
       - VITE_API_PROXY_TARGET=http://api:8000
     volumes:
-      - ./frontend/compchem-dashboard:/app
-      - /app/node_modules
+      - ./frontend/compchem-dashboard:/app/compchem-dashboard
+      - ./frontend/wetlab-dashboard:/app/wetlab-dashboard
+      - /app/compchem-dashboard/node_modules
     depends_on:
       - api
     restart: unless-stopped

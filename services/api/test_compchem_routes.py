@@ -96,6 +96,7 @@ Base.metadata.create_all(bind=_test_engine, tables=_cc_tables)
 from fastapi.testclient import TestClient  # noqa: E402
 import compchem_routes  # noqa: E402
 from compchem_routes import router as compchem_router  # noqa: E402
+from demo_sessions import create_demo_session  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 
 app = FastAPI()
@@ -219,6 +220,80 @@ def test_demo_login_and_reset_seed_demo_org():
     assert lead_event.actor == "dr_john_doe"
     assert "AC-007 nominated as lead candidate" in lead_event.details["message"]
     db.close()
+
+
+def test_demo_session_allows_reads_and_blocks_compchem_writes():
+    session = create_demo_session("compchem")
+    headers = {"Authorization": f"Demo {session.token}"}
+
+    r = client.get("/api/v1/campaigns", params={"org_id": "demo-therapeutics"}, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()
+
+    r = client.get("/api/v1/campaigns", params={"org_id": ORG}, headers=headers)
+    assert r.status_code == 403
+
+    r = client.post(
+        "/api/v1/campaigns",
+        json={
+            "org_id": "demo-therapeutics",
+            "project_name": "blocked-demo-write",
+            "name": "blocked-demo-campaign",
+        },
+        headers=headers,
+    )
+    assert r.status_code == 403
+    assert "requires an account" in r.json()["detail"]
+
+
+def test_demo_session_blocks_cro_credential_issuance():
+    session = create_demo_session("compchem")
+    r = client.post(
+        "/api/v1/orgs/demo-therapeutics/credentials",
+        json={
+            "credential_type": "cro_upload",
+            "campaign_id": _CAMPAIGN_ID,
+            "label": "Demo blocked",
+        },
+        headers={"Authorization": f"Demo {session.token}"},
+    )
+    assert r.status_code == 403
+    assert "CRO upload credentials" in r.json()["detail"]
+
+
+def test_reset_and_enter_compchem_preserves_wetlab_rows():
+    import pytest
+
+    pytest.importorskip("tenacity")
+    import app as full_app_module
+
+    full_app_module.ensure_bucket = lambda: None
+
+    db = database.SessionLocal()
+    marker = WetlabCampaign(
+        id="wetlab-marker",
+        org_id="demo-therapeutics",
+        name="Wet lab marker",
+        description="Must survive comp-chem reset",
+        domain="wetlab",
+    )
+    db.add(marker)
+    db.commit()
+    db.close()
+
+    full_client = TestClient(full_app_module.app)
+    r = full_client.post("/demo/reset-and-enter", params={"domain": "compchem"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["domain"] == "compchem"
+    assert body["session_token"]
+    assert body["redirect_url"].startswith("/campaigns/")
+
+    db = database.SessionLocal()
+    try:
+        assert db.query(WetlabCampaign).filter(WetlabCampaign.id == "wetlab-marker").first() is not None
+    finally:
+        db.close()
 
 
 def test_issue_and_list_cro_upload_credential():

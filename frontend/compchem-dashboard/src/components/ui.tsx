@@ -216,11 +216,12 @@ export function TertiaryButton({
 export function Card({
   children,
   className = "",
+  ...props
 }: {
   children: React.ReactNode;
   className?: string;
-}) {
-  return <section className={`${styles.card} ${className}`}>{children}</section>;
+} & React.HTMLAttributes<HTMLElement>) {
+  return <section className={`${styles.card} ${className}`} {...props}>{children}</section>;
 }
 
 export function Stat({ label, value }: { label: string; value: React.ReactNode }) {

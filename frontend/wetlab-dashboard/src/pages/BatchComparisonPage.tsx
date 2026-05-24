@@ -371,95 +371,92 @@ export default function BatchComparisonPage() {
           Lead batch is rendered in ink black to draw the eye. Gold star above
           the X-tick of the lead batch. */}
       <SectionRule eyebrow="Outcome" title="Peak VCD + Final titer" />
-      <div className={styles.chartPanel}>
-        <div className={styles.chartCanvas} style={{ width: "100%", height: 360 }}>
-          <ResponsiveContainer>
-            <BarChart
-              data={chartRows}
-              margin={{ top: 32, right: 24, left: 8, bottom: 24 }}
-              barCategoryGap="28%"
-            >
-              <CartesianGrid strokeDasharray="2 4" stroke={CHART_GRID} />
-              <XAxis
-                dataKey="batch"
-                stroke={AXIS_INK}
-                tickLine={false}
-                tick={xTickWithStar as never}
-                height={40}
-              />
-              <YAxis
-                yAxisId="left"
-                stroke={AXIS_INK}
-                tick={{ fill: AXIS_TICK, fontFamily: "JetBrains Mono", fontSize: 11 }}
-                label={{
-                  value: "Peak VCD (×10⁶/mL)",
-                  angle: -90,
-                  position: "insideLeft",
-                  fill: AXIS_INK,
-                  fontFamily: "JetBrains Mono",
-                  fontSize: 11,
-                }}
-              />
-              <YAxis
-                yAxisId="right"
-                orientation="right"
-                stroke={AXIS_INK}
-                tick={{ fill: AXIS_TICK, fontFamily: "JetBrains Mono", fontSize: 11 }}
-                label={{
-                  value: "Final titer (mg/L)",
-                  angle: 90,
-                  position: "insideRight",
-                  fill: AXIS_INK,
-                  fontFamily: "JetBrains Mono",
-                  fontSize: 11,
-                }}
-              />
-              <Tooltip
-                contentStyle={TOOLTIP_CONTENT}
-                cursor={{ fill: "rgba(20,24,31,0.04)" }}
-                labelFormatter={(l) => `Batch ${l}`}
-              />
-              <Legend
-                wrapperStyle={{
-                  fontFamily: "Inter Tight",
-                  fontSize: 12,
-                  color: AXIS_TICK,
-                }}
-              />
-              <Bar
-                yAxisId="left"
-                dataKey="peak_vcd_e6_per_ml"
-                name="Peak VCD (×10⁶/mL)"
-                radius={[3, 3, 0, 0]}
-                stroke={LEAD_GOLD}
-                strokeWidth={0}
-              >
-                {chartRows.map((_, i) => (
-                  <Cell
-                    key={`vcd-${i}`}
-                    fill={vcdBarFill(i)}
-                    stroke={i === leadIndex ? LEAD_GOLD : undefined}
-                    strokeWidth={i === leadIndex ? 2 : 0}
-                  />
-                ))}
-              </Bar>
-              <Bar
-                yAxisId="right"
-                dataKey="final_titer_mg_per_l"
-                name="Final titer (mg/L)"
-                radius={[3, 3, 0, 0]}
-              >
-                {chartRows.map((_, i) => (
-                  <Cell
-                    key={`titer-${i}`}
-                    fill={titerBarFill(i)}
-                    stroke={i === leadIndex ? LEAD_GOLD : undefined}
-                    strokeWidth={i === leadIndex ? 2 : 0}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+      <div className={styles.chartPanel} data-tour="wetlab-batch-comparison">
+        <div className={styles.chartCanvas}>
+          <svg viewBox="0 0 760 360" role="img" aria-label="Peak VCD and final titer by batch">
+            {(() => {
+              const width = 760;
+              const height = 360;
+              const margin = { top: 28, right: 34, bottom: 58, left: 58 };
+              const plotWidth = width - margin.left - margin.right;
+              const plotHeight = height - margin.top - margin.bottom;
+              const maxVcd = Math.max(1, ...chartRows.map((row) => row.peak_vcd_e6_per_ml));
+              const maxTiter = Math.max(1, ...chartRows.map((row) => row.final_titer_mg_per_l));
+              const groupWidth = plotWidth / Math.max(chartRows.length, 1);
+              const barWidth = Math.min(42, groupWidth * 0.26);
+              return (
+                <>
+                  <rect x={margin.left} y={margin.top} width={plotWidth} height={plotHeight} fill="var(--bg-mute)" stroke="var(--rule)" />
+                  {[0, 0.25, 0.5, 0.75, 1].map((tick) => {
+                    const y = margin.top + plotHeight - tick * plotHeight;
+                    return (
+                      <g key={tick}>
+                        <line x1={margin.left} y1={y} x2={margin.left + plotWidth} y2={y} stroke="var(--rule)" />
+                        <text x={margin.left - 10} y={y + 4} textAnchor="end" className={styles.svgAxisTick}>
+                          {fmtNumber(maxVcd * tick, 1)}
+                        </text>
+                        <text x={margin.left + plotWidth + 10} y={y + 4} textAnchor="start" className={styles.svgAxisTick}>
+                          {fmtNumber(maxTiter * tick, 0)}
+                        </text>
+                      </g>
+                    );
+                  })}
+                  {chartRows.map((row, index) => {
+                    const center = margin.left + groupWidth * index + groupWidth / 2;
+                    const vcdHeight = (row.peak_vcd_e6_per_ml / maxVcd) * plotHeight;
+                    const titerHeight = (row.final_titer_mg_per_l / maxTiter) * plotHeight;
+                    const isLead = index === leadIndex;
+                    return (
+                      <g key={row.batch}>
+                        {isLead ? (
+                          <text x={center} y={margin.top - 8} textAnchor="middle" fill={LEAD_GOLD} fontSize={16}>
+                            ★
+                          </text>
+                        ) : null}
+                        <rect
+                          x={center - barWidth - 2}
+                          y={margin.top + plotHeight - vcdHeight}
+                          width={barWidth}
+                          height={vcdHeight}
+                          rx={3}
+                          fill={vcdBarFill(index)}
+                          stroke={isLead ? LEAD_GOLD : "none"}
+                          strokeWidth={isLead ? 2 : 0}
+                        />
+                        <rect
+                          x={center + 2}
+                          y={margin.top + plotHeight - titerHeight}
+                          width={barWidth}
+                          height={titerHeight}
+                          rx={3}
+                          fill={titerBarFill(index)}
+                          stroke={isLead ? LEAD_GOLD : "none"}
+                          strokeWidth={isLead ? 2 : 0}
+                        />
+                        <text x={center} y={height - 24} textAnchor="middle" className={styles.svgAxisTick}>
+                          {row.batch}
+                        </text>
+                      </g>
+                    );
+                  })}
+                  <text x={margin.left + plotWidth / 2} y={height - 6} textAnchor="middle" className={styles.svgAxisLabel}>
+                    Batch
+                  </text>
+                  <text x={18} y={margin.top + plotHeight / 2} textAnchor="middle" className={styles.svgAxisLabel} transform={`rotate(-90 18 ${margin.top + plotHeight / 2})`}>
+                    Peak VCD (x10^6/mL)
+                  </text>
+                  <text x={width - 14} y={margin.top + plotHeight / 2} textAnchor="middle" className={styles.svgAxisLabel} transform={`rotate(90 ${width - 14} ${margin.top + plotHeight / 2})`}>
+                    Final titer (mg/L)
+                  </text>
+                </>
+              );
+            })()}
+          </svg>
+          <div className={styles.chartLegend}>
+            <span><i style={{ background: VCD_BAR }} /> Peak VCD</span>
+            <span><i style={{ background: TITER_BAR }} /> Final titer</span>
+            <span><i style={{ background: LEAD_INK }} /> Lead condition</span>
+          </div>
         </div>
       </div>
 

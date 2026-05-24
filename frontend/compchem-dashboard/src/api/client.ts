@@ -1,3 +1,5 @@
+import { demoAuthHeaders, storeDemoSession } from "../lib/demoSession";
+
 export type Campaign = {
   id: number;
   org_id: string;
@@ -25,6 +27,23 @@ export type OrgInfo = {
   org_id: string;
   name?: string | null;
   demo_mode: boolean;
+};
+
+export type DemoEntry = {
+  status: string;
+  domain: "compchem" | "wetlab";
+  org_id: string;
+  campaign_id: string;
+  redirect_url: string;
+  session_token: string;
+  session_expires_at: string;
+};
+
+export type DemoShare = {
+  url: string;
+  expires: string;
+  qr_code: string;
+  short_code?: string | null;
 };
 
 export type CampaignRun = {
@@ -220,7 +239,13 @@ function orgParam(orgId: string) {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, init);
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      ...demoAuthHeaders(),
+      ...(init?.headers || {}),
+    },
+  });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `${response.status} ${response.statusText}`);
@@ -234,6 +259,26 @@ export const api = {
     "/api/v1/demo/login",
     { method: "POST" }
   ),
+  resetAndEnterDemo: (domain: "compchem" | "wetlab") =>
+    request<DemoEntry>(`/demo/reset-and-enter?domain=${encodeURIComponent(domain)}`, { method: "POST" })
+      .then((entry) => {
+        storeDemoSession({
+          token: entry.session_token,
+          domain: entry.domain,
+          expiresAt: entry.session_expires_at,
+        });
+        return entry;
+      }),
+  shareDemo: (domain: "compchem" | "wetlab" | "both", label?: string) => {
+    const params = new URLSearchParams({ domain });
+    if (label) params.set("label", label);
+    return request<DemoShare>(`/demo/share?${params.toString()}`);
+  },
+  recordDemoShareOpened: (shortCode: string) =>
+    request<{ short_code: string; recorded: boolean }>(
+      `/demo/share/${encodeURIComponent(shortCode)}/opened`,
+      { method: "POST" }
+    ),
   campaigns: (orgId: string) => request<Campaign[]>(`/api/v1/campaigns?${orgParam(orgId)}`),
   campaign: (id: string | number, orgId: string) =>
     request<Campaign>(`/api/v1/campaigns/${id}?${orgParam(orgId)}`),

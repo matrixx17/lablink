@@ -18,6 +18,7 @@ import {
   StatusBadge,
 } from "../components/ui";
 import { downloadBatchRecord, downloadEvidenceBook } from "../lib/evidenceBook";
+import { getDemoSession } from "../lib/demoSession";
 import styles from "./pages.module.css";
 
 export default function CampaignDetailPage() {
@@ -90,7 +91,7 @@ export default function CampaignDetailPage() {
   };
 
   const isWetlab = campaign.domain === "wetlab";
-  const isDemoViewer = orgId === "demo-therapeutics";
+  const isDemoViewer = orgId === "demo-therapeutics" && getDemoSession()?.domain === "wetlab";
   const approvals = campaign.approvals || [];
 
   const refreshCampaign = async () => {
@@ -180,12 +181,14 @@ export default function CampaignDetailPage() {
               {exporting ? "Bundling…" : "Download Evidence Book"}
             </PrimaryButton>
             {isWetlab ? (
-              <SecondaryButton
-                onClick={onDownloadBatchRecord}
-                loading={exportingBatch}
-              >
-                {exportingBatch ? "Bundling…" : "Download Batch Record"}
-              </SecondaryButton>
+              <span data-tour="wetlab-export" className={styles.tourInlineGroup}>
+                <SecondaryButton
+                  onClick={onDownloadBatchRecord}
+                  loading={exportingBatch}
+                >
+                  {exportingBatch ? "Bundling…" : "Download Batch Record"}
+                </SecondaryButton>
+              </span>
             ) : null}
             <SecondaryButton
               as="a"
@@ -209,6 +212,12 @@ export default function CampaignDetailPage() {
           {exportToast}
         </div>
       ) : null}
+
+      <div className={styles.deliveryInfo} data-tour="wetlab-campaign-overview">
+        <strong>{extra.cro_partner || "BioProcess Labs"} delivery verified</strong>
+        <span>{campaign.batch_count} fed-batch conditions organized automatically</span>
+        <span>{extra.process_type || "mAb process development"}</span>
+      </div>
 
       <KpiStrip items={kpis} />
 
@@ -342,8 +351,11 @@ export default function CampaignDetailPage() {
               </button>
             </div>
             <p className={styles.demoCopy}>
-              In the live product, qualified team members can sign off on campaigns here,
-              creating a permanent record for regulatory submissions.
+              This action requires an account. In the live product, you can sign off on campaigns
+              here, creating a permanent record for regulatory submissions.{" "}
+              <a href="mailto:hello@lablink.ai?subject=Early%20access%20request">
+                Request early access →
+              </a>
             </p>
             <div className={styles.modalActions}>
               <PrimaryButton onClick={() => setDemoRestrictionOpen(false)}>
@@ -368,7 +380,7 @@ function ApprovalSection({
     return (
       <div className={styles.approvalPanel}>
         <div className={`${styles.approvalBanner} ${styles.approvalWarn}`}>
-          ⚠ This campaign has not been approved by a qualified reviewer. Add an approval before regulatory submission.
+          This campaign has not been approved by a qualified reviewer. Add an approval before regulatory submission.
         </div>
         <SecondaryButton onClick={onAdd}>
           Add Approval

@@ -1,3 +1,5 @@
+import { demoAuthHeaders } from "./demoSession";
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 function orgParam(orgId: string) {
@@ -13,6 +15,7 @@ function filenameFromContentDisposition(header: string | null) {
 export async function downloadBcoExport(campaignId: string | number, orgId: string) {
   const response = await fetch(
     `${API_BASE}/api/v1/campaigns/${campaignId}/export/bco?${orgParam(orgId)}&download=true`,
+    { headers: demoAuthHeaders() },
   );
   if (!response.ok) {
     const text = await response.text();

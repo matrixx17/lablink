@@ -4,6 +4,8 @@
 // types and endpoints live on the comp-chem branch in a separate dashboard
 // and are intentionally not duplicated here.
 
+import { demoAuthHeaders, storeDemoSession } from "../lib/demoSession";
+
 export type WetlabCampaign = {
   id: string;
   org_id: string;
@@ -26,6 +28,29 @@ export type CampaignApproval = {
   approval_meaning: "author" | "reviewer" | "approver";
   comments?: string | null;
   created_at: string;
+};
+
+export type DemoEntry = {
+  status: string;
+  domain: "compchem" | "wetlab";
+  org_id: string;
+  campaign_id: string;
+  redirect_url: string;
+  session_token: string;
+  session_expires_at: string;
+};
+
+export type DemoShare = {
+  url: string;
+  expires: string;
+  qr_code: string;
+  short_code?: string | null;
+};
+
+export type OrgInfo = {
+  org_id: string;
+  name?: string | null;
+  demo_mode: boolean;
 };
 
 export type WetlabBatch = {
@@ -76,6 +101,19 @@ export type WetlabQcResult = {
   parameter?: string | null;
 };
 
+export type WetlabAuditEvent = {
+  id: number;
+  timestamp?: string | null;
+  org_id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  actor: string;
+  details?: Record<string, unknown> | null;
+  previous_hash?: string | null;
+  record_hash: string;
+};
+
 export type WetlabBatchSummaryMetrics = {
   peak_vcd?: number | null;
   final_titer?: number | null;
@@ -91,7 +129,13 @@ function orgParam(orgId: string) {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, init);
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      ...demoAuthHeaders(),
+      ...(init?.headers || {}),
+    },
+  });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `${response.status} ${response.statusText}`);
@@ -100,12 +144,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  org: (orgId: string) => request<OrgInfo>(`/api/v1/orgs/${encodeURIComponent(orgId)}?${orgParam(orgId)}`),
+  resetAndEnterDemo: (domain: "compchem" | "wetlab") =>
+    request<DemoEntry>(`/demo/reset-and-enter?domain=${encodeURIComponent(domain)}`, { method: "POST" })
+      .then((entry) => {
+        storeDemoSession({
+          token: entry.session_token,
+          domain: entry.domain,
+          expiresAt: entry.session_expires_at,
+        });
+        return entry;
+      }),
+  shareDemo: (domain: "compchem" | "wetlab" | "both", label?: string) => {
+    const params = new URLSearchParams({ domain });
+    if (label) params.set("label", label);
+    return request<DemoShare>(`/demo/share?${params.toString()}`);
+  },
+  recordDemoShareOpened: (shortCode: string) =>
+    request<{ short_code: string; recorded: boolean }>(
+      `/demo/share/${encodeURIComponent(shortCode)}/opened`,
+      { method: "POST" }
+    ),
   campaigns: (orgId: string) =>
-    request<WetlabCampaign[]>(`/api/v1/campaigns?${orgParam(orgId)}&domain=wetlab`),
+    request<WetlabCampaign[]>(`/api/v1/wetlab/campaigns?${orgParam(orgId)}&domain=wetlab`),
   campaign: (id: string, orgId: string) =>
-    request<WetlabCampaign>(`/api/v1/campaigns/${id}?${orgParam(orgId)}`),
+    request<WetlabCampaign>(`/api/v1/wetlab/campaigns/${id}?${orgParam(orgId)}`),
   campaignBatches: (id: string, orgId: string) =>
-    request<WetlabBatch[]>(`/api/v1/campaigns/${id}/batches?${orgParam(orgId)}`),
+    request<WetlabBatch[]>(`/api/v1/wetlab/campaigns/${id}/batches?${orgParam(orgId)}`),
   batch: (id: string, orgId: string) =>
     request<WetlabBatch>(`/api/v1/batches/${id}?${orgParam(orgId)}`),
   batchTimeseries: (id: string, orgId: string) =>
@@ -118,7 +183,7 @@ export const api = {
     ),
   campaignBatchesWithMetrics: (id: string, orgId: string) =>
     request<(WetlabBatch & { summary_metrics?: WetlabBatchSummaryMetrics })[]>(
-      `/api/v1/campaigns/${id}/batches?${orgParam(orgId)}&include_metrics=true`,
+      `/api/v1/wetlab/campaigns/${id}/batches?${orgParam(orgId)}&include_metrics=true`,
     ),
   campaignMethods: (id: string, orgId: string) =>
     request<{
@@ -131,13 +196,15 @@ export const api = {
       missing_fields: string[];
       software_versions: Record<string, string[]>;
       run_counts: Record<string, number>;
-    }>(`/api/v1/campaigns/${id}/methods?${orgParam(orgId)}`),
+    }>(`/api/v1/wetlab/campaigns/${id}/methods?${orgParam(orgId)}`),
+  auditLogs: (orgId: string) =>
+    request<WetlabAuditEvent[]>(`/api/v1/audit?${orgParam(orgId)}&limit=1000`),
   approveCampaign: (
     id: string,
     orgId: string,
     body: { approval_meaning: "author" | "reviewer" | "approver"; comments?: string },
   ) =>
-    request<CampaignApproval>(`/api/v1/campaigns/${id}/approve?${orgParam(orgId)}`, {
+    request<CampaignApproval>(`/api/v1/wetlab/campaigns/${id}/approve?${orgParam(orgId)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

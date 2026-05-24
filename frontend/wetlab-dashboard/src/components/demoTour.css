@@ -1,0 +1,91 @@
+.lablinkTourStep {
+  max-width: 420px;
+  padding: 0;
+  border: 1px solid var(--rule-2);
+  border-radius: 12px;
+  background: var(--bg-elev);
+  box-shadow: 0 24px 80px rgba(20, 24, 31, 0.16);
+  color: var(--ink);
+  font-family: var(--body);
+}
+
+.lablinkTourStep .shepherd-content {
+  border-radius: 12px;
+}
+
+.lablinkTourStep .shepherd-header {
+  align-items: flex-start;
+  padding: 22px 24px 0;
+  background: transparent;
+}
+
+.lablinkTourStep .shepherd-title {
+  font-family: var(--display);
+  font-size: 28px;
+  font-weight: 400;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.lablinkTourStep .shepherd-cancel-icon {
+  color: var(--ink-3);
+  font-size: 24px;
+}
+
+.lablinkTourStep .shepherd-text {
+  padding: 14px 24px 4px;
+  color: var(--ink-2);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.lablinkTourStep .shepherd-footer {
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 18px 24px 24px;
+}
+
+.lablinkTourStep .shepherd-button {
+  border: 1px solid var(--ink);
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--bg);
+  cursor: pointer;
+  font-family: var(--body);
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 10px 16px;
+  transition: background 100ms ease, border-color 100ms ease, color 100ms ease;
+}
+
+.lablinkTourStep .shepherd-button:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.lablinkTourStep .shepherd-button-secondary {
+  background: var(--bg-elev);
+  border-color: var(--rule-2);
+  color: var(--ink);
+}
+
+.lablinkTourStep .shepherd-button-secondary:hover {
+  background: var(--bg-elev);
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.lablinkTourStep .shepherd-arrow::before {
+  background: var(--bg-elev);
+  border: 1px solid var(--rule-2);
+}
+
+.shepherd-modal-overlay-container.shepherd-modal-is-visible {
+  opacity: 0.38;
+}
+
+[data-tour] {
+  scroll-margin: 96px;
+}

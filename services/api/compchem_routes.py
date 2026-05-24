@@ -38,6 +38,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import resolve_auth, require_org_access, verify_api_key
+from demo_sessions import reject_demo_write
 from compchem_bco import build_bco
 from compchem_ingest import ingest_run_manifest
 import database as wetlab_models
@@ -582,6 +583,7 @@ def issue_org_credential(
         raise HTTPException(status_code=403, detail="Credential issuance is only available in hosted mode")
     a_org, actor = auth
     require_org_access(org_id, a_org)
+    reject_demo_write(auth, "issue scoped CRO upload credentials")
 
     org = db.query(Organization).filter(Organization.org_id == org_id).first()
     if not org:
@@ -668,6 +670,7 @@ def revoke_credential(
         raise HTTPException(status_code=404, detail="Credential not found")
     a_org, actor = auth
     require_org_access(record.org_id, a_org)
+    reject_demo_write(auth, "revoke scoped CRO upload credentials")
     record.revoked_at = datetime.now(timezone.utc)
     db.commit()
     log_cc_audit(
@@ -775,6 +778,7 @@ def create_campaign(
     """Create a campaign (and parent project if it doesn't exist)."""
     org_id, actor = auth
     require_org_access(body.org_id, org_id)
+    reject_demo_write(auth, "create computational chemistry campaigns")
 
     org = db.query(Organization).filter(Organization.org_id == body.org_id).first()
     if org is None:
@@ -1129,6 +1133,7 @@ def create_docking_grid(
     """Create a docking grid definition scoped to a campaign."""
     a_org, actor = auth
     require_org_access(org_id, a_org)
+    reject_demo_write(auth, "create docking grids")
     _load_campaign(db, campaign_id, org_id)
     if body.campaign_id != campaign_id:
         raise HTTPException(400, "body.campaign_id must match path campaign_id")
@@ -1247,6 +1252,7 @@ def ingest_run(
     org_id_param = manifest.get("org_id") or a_org
     manifest["org_id"] = org_id_param
     require_org_access(org_id_param, a_org)
+    reject_demo_write((a_org, actor), "submit computational chemistry runs")
 
     try:
         result = ingest_run_manifest(db=db, manifest=manifest, actor=actor)
@@ -1720,6 +1726,7 @@ def update_run_grid(
     """Associate an existing run with a docking grid."""
     a_org, actor = auth
     require_org_access(org_id, a_org)
+    reject_demo_write(auth, "change run docking-grid assignments")
     run = db.query(Run).filter(Run.id == run_id, Run.org_id == org_id).first()
     if not run:
         raise HTTPException(404, "Run not found")

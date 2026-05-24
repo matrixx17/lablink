@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from auth import resolve_auth, require_org_access, create_api_key
+from demo_sessions import is_demo_auth, reject_demo_write
 from compliance import soc2_readiness_checklist
 from database import (
     RunRecord, MeasurementSeries, FileRecord, AuditLog, RunStatus,
@@ -87,6 +88,7 @@ def create_run(
 ):
     org_id, _ = auth
     require_org_access(body.org_id, org_id)
+    reject_demo_write(auth, "create bioprocess runs")
     run = get_or_create_run(
         db, body.org_id, body.external_run_id,
         batch_id=body.batch_id, campaign_id=body.campaign_id,
@@ -113,6 +115,7 @@ def list_runs(
 ):
     a_org, _ = auth
     require_org_access(org_id, a_org)
+    reject_demo_write(auth, "realign run data")
     q = db.query(RunRecord).filter(RunRecord.org_id == org_id)
     if status:
         q = q.filter(RunRecord.status == status)
@@ -420,6 +423,7 @@ def _batch_to_out(b: Batch) -> BatchOut:
     )
 
 
+@router.get("/api/v1/wetlab/campaigns", response_model=List[CampaignOut])
 @router.get("/api/v1/campaigns", response_model=List[CampaignOut])
 def list_campaigns(
     domain: Optional[str] = None,
@@ -437,6 +441,7 @@ def list_campaigns(
     return out
 
 
+@router.get("/api/v1/wetlab/campaigns/{campaign_id}", response_model=CampaignOut)
 @router.get("/api/v1/campaigns/{campaign_id}", response_model=CampaignOut)
 def get_campaign(
     campaign_id: str,
@@ -451,6 +456,7 @@ def get_campaign(
     return _campaign_to_out(db, c)
 
 
+@router.post("/api/v1/wetlab/campaigns/{campaign_id}/approve", response_model=ApprovalRead)
 @router.post("/api/v1/campaigns/{campaign_id}/approve", response_model=ApprovalRead)
 def approve_campaign(
     campaign_id: str,
@@ -463,6 +469,7 @@ def approve_campaign(
     if not c:
         raise HTTPException(404, "Campaign not found")
     require_org_access(org_id, c.org_id)
+    reject_demo_write(auth, "sign campaign approvals")
 
     user = _resolve_approval_user(db, c.org_id, actor)
     approval = CampaignApproval(
@@ -500,6 +507,7 @@ def approve_campaign(
     return _approval_to_read(approval)
 
 
+@router.get("/api/v1/wetlab/campaigns/{campaign_id}/approvals", response_model=List[ApprovalRead])
 @router.get("/api/v1/campaigns/{campaign_id}/approvals", response_model=List[ApprovalRead])
 def list_campaign_approvals(
     campaign_id: str,
@@ -514,6 +522,7 @@ def list_campaign_approvals(
     return [_approval_to_read(a) for a in _campaign_approvals(db, campaign_id)]
 
 
+@router.get("/api/v1/wetlab/campaigns/{campaign_id}/methods")
 @router.get("/api/v1/campaigns/{campaign_id}/methods")
 def get_campaign_methods(
     campaign_id: str,
@@ -535,6 +544,7 @@ def get_campaign_methods(
     return generate_methods(db, c)
 
 
+@router.get("/api/v1/wetlab/campaigns/{campaign_id}/batches", response_model=List[BatchOut])
 @router.get("/api/v1/campaigns/{campaign_id}/batches", response_model=List[BatchOut])
 def list_campaign_batches(
     campaign_id: str,
@@ -700,6 +710,15 @@ def get_batch_qc(
     if c is not None:
         require_org_access(org_id, c.org_id)
 
+    if refresh and is_demo_auth(auth):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This action requires an account. In the live product, you can "
+                "rerun wet lab QC checks and persist the updated findings. Request early access ->"
+            ),
+        )
+
     cached = (b.extra_params or {}).get("qc_results")
     if cached and not refresh:
         return [QCResultOut(**r) for r in cached]
@@ -741,6 +760,7 @@ def list_batch_samples(
     ]
 
 
+@router.get("/api/v1/wetlab/campaigns/{campaign_id}/export/evidence-book")
 @router.get("/api/v1/campaigns/{campaign_id}/export/evidence-book")
 def export_campaign_evidence_book(
     campaign_id: str,

@@ -1,10 +1,14 @@
 
+import base64
+import io
 import os
 import secrets
-import asyncio
 import uuid
+import threading
+import time
 from datetime import datetime, timezone
 from contextvars import ContextVar
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, HTTPException, UploadFile, BackgroundTasks, Query, Depends, Request, Response
 from fastapi.responses import JSONResponse
@@ -48,6 +52,8 @@ from circuit_breaker import (
     get_all_breaker_status, reset_all_breakers,
     storage_breaker, webhook_breaker, database_breaker
 )
+from demo_sessions import DEMO_RESTRICTED_DETAIL, create_demo_session, get_demo_session
+import qrcode
 
 # Version info
 API_VERSION = "0.2.0-bioprocess"
@@ -128,6 +134,29 @@ app.include_router(compchem_router)
 app.include_router(bioprocess_router)
 
 
+def _is_allowed_demo_mutation(path: str) -> bool:
+    return (
+        path in {"/demo/reset-and-enter", "/api/v1/demo/reset-and-enter"}
+        or path.startswith("/api/v1/audit/verify/")
+        or path.startswith("/demo/share/")
+        or path.startswith("/api/v1/demo/share/")
+    )
+
+
+@app.middleware("http")
+async def enforce_demo_read_only(request: Request, call_next):
+    authorization = request.headers.get("Authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() == "demo":
+        if request.url.path in {"/demo/reset-and-enter", "/api/v1/demo/reset-and-enter"}:
+            return await call_next(request)
+        if not get_demo_session(token.strip()):
+            return JSONResponse(status_code=401, content={"detail": "Demo session expired. Restart the demo."})
+        if request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"} and not _is_allowed_demo_mutation(request.url.path):
+            return JSONResponse(status_code=403, content={"detail": DEMO_RESTRICTED_DETAIL})
+    return await call_next(request)
+
+
 # Request ID Middleware
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
@@ -158,6 +187,192 @@ def get_db():
         db.close()
 
 
+class DemoEntryResponse(BaseModel):
+    status: str
+    domain: str
+    org_id: str
+    campaign_id: str
+    redirect_url: str
+    session_token: str
+    session_expires_at: str
+
+
+class DemoShareResponse(BaseModel):
+    url: str
+    expires: str
+    qr_code: str
+    short_code: Optional[str] = None
+
+
+class DemoShareOpenedResponse(BaseModel):
+    short_code: str
+    recorded: bool
+
+
+def _public_demo_base_url() -> str:
+    return os.getenv("LABLINK_PUBLIC_BASE_URL", "https://lablink.io").rstrip("/")
+
+
+def _demo_share_url(domain: str, code: Optional[str] = None) -> str:
+    params: Dict[str, str] = {"ref": "shared", "domain": domain}
+    if code:
+        params["code"] = code
+    return f"{_public_demo_base_url()}/demo?{urlencode(params)}"
+
+
+def _qr_code_png_base64(value: str) -> str:
+    image = qrcode.make(value)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def _dashboard_redirect_url(domain: str, campaign_id: str, org_id: str, request: Request) -> str:
+    base_env = (
+        "DEMO_COMPCHEM_DASHBOARD_URL"
+        if domain == "compchem"
+        else "DEMO_WETLAB_DASHBOARD_URL"
+    )
+    base_url = os.getenv(base_env, "").rstrip("/")
+    route_prefix = "/wetlab" if domain == "wetlab" else ""
+    path = f"{route_prefix}/campaigns/{campaign_id}?{urlencode({'org': org_id})}"
+    if base_url:
+        return f"{base_url}{path}"
+
+    # Same-origin deployments can use a relative URL. Local multi-port demos can
+    # set the domain-specific env vars above to cross from one dashboard to the other.
+    return path
+
+
+@app.get("/demo/share", response_model=DemoShareResponse)
+@app.get("/api/v1/demo/share", response_model=DemoShareResponse)
+def share_demo(
+    domain: str = Query(..., pattern="^(compchem|wetlab|both)$"),
+    label: Optional[str] = Query(None, max_length=255),
+):
+    """
+    Return a durable public demo link and QR code.
+
+    `domain=both` intentionally keeps the visitor on the selector so they can
+    choose a vertical while preserving shared/ref context. When `label` is
+    provided we mint a tracked short_code so opens of this specific link can
+    be attributed back to the recipient.
+    """
+    from demo_share import create_share_code
+
+    code: Optional[str] = None
+    if label:
+        code = create_share_code(domain=domain, label=label)
+
+    url = _demo_share_url(domain, code=code)
+    return DemoShareResponse(
+        url=url,
+        expires="never — link always works",
+        qr_code=_qr_code_png_base64(url),
+        short_code=code,
+    )
+
+
+@app.post("/demo/share/{short_code}/opened", response_model=DemoShareOpenedResponse)
+@app.post("/api/v1/demo/share/{short_code}/opened", response_model=DemoShareOpenedResponse)
+def record_demo_share_opened(short_code: str):
+    """Record a click on a tracked share link. Idempotency: each call bumps
+    the open count; the landing page POSTs this exactly once per session."""
+    from demo_share import record_open
+
+    return DemoShareOpenedResponse(short_code=short_code, recorded=record_open(short_code))
+
+
+@app.post("/demo/reset-and-enter", response_model=DemoEntryResponse)
+@app.post("/api/v1/demo/reset-and-enter", response_model=DemoEntryResponse)
+def reset_and_enter_demo(
+    response: Response,
+    request: Request,
+    domain: str = Query(..., pattern="^(compchem|wetlab)$"),
+    db: Session = Depends(get_db),
+):
+    """Public demo bootstrap: reset one domain and return the dashboard entry URL."""
+    org_id = "demo-therapeutics"
+    if domain == "compchem":
+        from demo_seed import DEMO_ORG_ID, reset_demo_environment
+        from compchem_models import Campaign as CompChemCampaign
+
+        result = reset_demo_environment(db)
+        campaign = (
+            db.query(CompChemCampaign)
+            .filter(CompChemCampaign.org_id == DEMO_ORG_ID)
+            .order_by(CompChemCampaign.id.desc())
+            .first()
+        )
+        if not campaign:
+            raise HTTPException(status_code=500, detail="Comp-chem demo campaign was not created")
+        org_id = DEMO_ORG_ID
+        campaign_id = str(campaign.id)
+    else:
+        from wetlab_seed import DEMO_ORG_ID, delete_wetlab_demo, seed_wetlab_demo
+
+        delete_wetlab_demo(db)
+        result = seed_wetlab_demo(db)
+        org_id = DEMO_ORG_ID
+        campaign_id = str(result["campaign_id"])
+
+    session = create_demo_session(domain=domain, org_id=org_id)
+    response.set_cookie(
+        key="lablink_demo_session",
+        value=session.token,
+        max_age=2 * 60 * 60,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+    )
+
+    return DemoEntryResponse(
+        status=result.get("status", "ok"),
+        domain=domain,
+        org_id=org_id,
+        campaign_id=campaign_id,
+        redirect_url=_dashboard_redirect_url(domain, campaign_id, org_id, request),
+        session_token=session.token,
+        session_expires_at=session.expires_at.isoformat(),
+    )
+
+
+def _reset_all_demo_data_once() -> None:
+    db = SessionLocal()
+    try:
+        from demo_seed import reset_demo_environment
+        from wetlab_seed import delete_wetlab_demo, seed_wetlab_demo
+
+        reset_demo_environment(db)
+        delete_wetlab_demo(db)
+        seed_wetlab_demo(db)
+        from demo_sessions import purge_expired_persistent_sessions
+
+        removed = purge_expired_persistent_sessions()
+        logger.info(
+            "Periodic public demo reset completed (purged %d expired sessions)",
+            removed,
+        )
+    except Exception as e:
+        logger.exception("Periodic public demo reset failed: %s", e)
+    finally:
+        db.close()
+
+
+def _start_demo_reset_worker() -> None:
+    if getattr(app.state, "demo_reset_worker_started", False):
+        return
+    app.state.demo_reset_worker_started = True
+
+    def run() -> None:
+        while True:
+            time.sleep(30 * 60)
+            _reset_all_demo_data_once()
+
+    thread = threading.Thread(target=run, name="lablink-demo-reset", daemon=True)
+    thread.start()
+
+
 @app.on_event("startup")
 def startup():
     # Schema is managed by Alembic (make migrate). create_all() is not called here
@@ -168,6 +383,7 @@ def startup():
         check_bioprocess_schema()
     except Exception:
         pass
+    _start_demo_reset_worker()
 
 
 class PresignRequest(BaseModel):

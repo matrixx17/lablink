@@ -128,6 +128,7 @@ export default function AuditPage() {
             className={`${styles.auditIntegrityBadge} ${
               integrityOk ? styles.auditIntegrityPass : styles.auditIntegrityFail
             }`}
+            data-tour="compchem-audit-integrity"
           >
             {integrityOk ? "Chain integrity verified" : "Chain compromised"}
           </span>

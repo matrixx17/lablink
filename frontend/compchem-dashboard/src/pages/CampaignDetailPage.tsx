@@ -262,18 +262,20 @@ export default function CampaignDetailPage() {
             >
               Export CSV
             </PrimaryButton>
-            {showBcoExport ? (
-              <SecondaryButton onClick={exportBco} disabled={exportingBco} loading={exportingBco}>
-                Export BCO
+            <span data-tour="compchem-exports" className={styles.tourInlineGroup}>
+              {showBcoExport ? (
+                <SecondaryButton onClick={exportBco} disabled={exportingBco} loading={exportingBco}>
+                  Export BCO
+                </SecondaryButton>
+              ) : null}
+              <SecondaryButton
+                onClick={exportEvidenceBook}
+                disabled={exportingEvidenceBook}
+                loading={exportingEvidenceBook}
+              >
+                Export Evidence Book
               </SecondaryButton>
-            ) : null}
-            <SecondaryButton
-              onClick={exportEvidenceBook}
-              disabled={exportingEvidenceBook}
-              loading={exportingEvidenceBook}
-            >
-              Export Evidence Book
-            </SecondaryButton>
+            </span>
             <SecondaryButton as="a" href={withOrg(`/campaigns/${id}/audit`, orgId)}>
               Audit trail
             </SecondaryButton>
@@ -288,7 +290,7 @@ export default function CampaignDetailPage() {
       />
 
       {campaign.has_cro_delivery ? (
-        <section className={styles.deliveryVerificationCard}>
+        <section className={styles.deliveryVerificationCard} data-tour="compchem-delivery">
           <div className={styles.deliveryVerificationIcon} aria-hidden>
             <svg viewBox="0 0 24 24" role="img">
               <path d="M12 3 5 6v5c0 4.4 2.8 8.4 7 10 4.2-1.6 7-5.6 7-10V6l-7-3Z" />
@@ -360,6 +362,7 @@ export default function CampaignDetailPage() {
           className={styles.leadBanner}
           to={withOrg(`/molecules/${lead.id}`, orgId)}
           style={{ textDecoration: "none" }}
+          data-tour="compchem-lead"
         >
           <div>
             <p className={styles.leadEyebrow}>Lead candidate</p>

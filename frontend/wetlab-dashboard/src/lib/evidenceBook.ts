@@ -1,7 +1,7 @@
 /**
  * Download helpers for the campaign export endpoints.
  *
- * The server route is `GET /api/v1/campaigns/{id}/export/evidence-book`
+ * The server route is `GET /api/v1/wetlab/campaigns/{id}/export/evidence-book`
  * with an optional `?format=` query that selects which artifact to bundle:
  *
  *   format=evidence-book  (default) — VDR-style provenance pack
@@ -12,6 +12,8 @@
  * spinner and surface non-2xx errors as strings rather than a browser-
  * default navigation.
  */
+
+import { demoAuthHeaders } from "./demoSession";
 
 type DownloadResult = {
   filename: string;
@@ -40,12 +42,12 @@ async function downloadZip(
   fallbackPrefix: string,
 ): Promise<DownloadResult> {
   const url =
-    `/api/v1/campaigns/${encodeURIComponent(campaignId)}` +
+    `/api/v1/wetlab/campaigns/${encodeURIComponent(campaignId)}` +
     `/export/evidence-book` +
     `?org_id=${encodeURIComponent(orgId)}` +
     `&format=${encodeURIComponent(format)}`;
 
-  const r = await fetch(url, { method: "GET" });
+  const r = await fetch(url, { method: "GET", headers: demoAuthHeaders() });
   if (!r.ok) {
     const text = await r.text().catch(() => "");
     throw new Error(`Export failed (${r.status}): ${text || r.statusText}`);

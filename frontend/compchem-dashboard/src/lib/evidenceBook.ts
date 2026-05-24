@@ -1,3 +1,5 @@
+import { demoAuthHeaders } from "./demoSession";
+
 type DownloadResult = {
   filename: string;
   fileCount: number;
@@ -27,7 +29,7 @@ export async function downloadEvidenceBook(
     `/export/evidence-book` +
     `?org_id=${encodeURIComponent(orgId)}`;
 
-  const response = await fetch(url, { method: "GET" });
+  const response = await fetch(url, { method: "GET", headers: demoAuthHeaders() });
   if (!response.ok) {
     const text = await response.text().catch(() => "");
     throw new Error(`Export failed (${response.status}): ${text || response.statusText}`);

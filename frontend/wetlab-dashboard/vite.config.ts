@@ -8,7 +8,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": API_PROXY_TARGET
+      "/api": API_PROXY_TARGET,
+      "/demo/reset-and-enter": API_PROXY_TARGET,
+      "/demo/share": API_PROXY_TARGET
     }
   }
 });

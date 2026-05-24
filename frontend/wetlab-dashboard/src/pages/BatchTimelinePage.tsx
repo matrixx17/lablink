@@ -419,118 +419,94 @@ export default function BatchTimelinePage() {
           })}
         </div>
 
-        <div className={styles.chartCanvas} style={{ width: "100%", height: 440 }}>
-          <ResponsiveContainer>
-            <ComposedChart
-              data={chartData}
-              margin={{ top: 16, right: 24, left: 8, bottom: 24 }}
-            >
-              <CartesianGrid
-                strokeDasharray="2 4"
-                stroke="rgba(20, 24, 31, 0.08)"
-              />
-              <XAxis
-                dataKey="hours"
-                type="number"
-                domain={[0, 336]}
-                ticks={[0, 48, 96, 144, 192, 240, 288, 336]}
-                stroke="#7a8290"
-                tick={{ fill: "#4a5260", fontFamily: "JetBrains Mono", fontSize: 11 }}
-                label={{
-                  value: "h",
-                  position: "insideBottomRight",
-                  offset: -2,
-                  fill: "#7a8290",
-                  fontFamily: "JetBrains Mono",
-                  fontSize: 11,
-                }}
-              />
-              <YAxis
-                yAxisId="left"
-                stroke="#7a8290"
-                tick={{ fill: "#4a5260", fontFamily: "JetBrains Mono", fontSize: 11 }}
-                label={{
-                  value: "pH · %",
-                  angle: -90,
-                  position: "insideLeft",
-                  fill: "#7a8290",
-                  fontFamily: "JetBrains Mono",
-                  fontSize: 11,
-                }}
-              />
-              <YAxis
-                yAxisId="right"
-                orientation="right"
-                stroke="#7a8290"
-                tick={{ fill: "#4a5260", fontFamily: "JetBrains Mono", fontSize: 11 }}
-                label={{
-                  value: "×10⁶ / mg/L / g/L",
-                  angle: 90,
-                  position: "insideRight",
-                  fill: "#7a8290",
-                  fontFamily: "JetBrains Mono",
-                  fontSize: 11,
-                }}
-              />
-              <Tooltip
-                contentStyle={{
-                  background: "#ffffff",
-                  border: "1px solid rgba(20,24,31,0.14)",
-                  borderRadius: 6,
-                  fontFamily: "Inter Tight",
-                  fontSize: 12.5,
-                  color: "#14181f",
-                  boxShadow: "0 1px 0 rgba(20,24,31,0.06)",
-                }}
-                cursor={{
-                  stroke: "rgba(29, 42, 78, 0.4)",
-                  strokeDasharray: "2 2",
-                }}
-                formatter={(value, name) => [
-                  fmtNumber(typeof value === "number" ? value : Number(value), 3),
-                  String(name).replace("__offline", " (offline)"),
-                ]}
-                labelFormatter={(h) => `t = ${fmtNumber(h as number, 1)} h`}
-              />
-              <Legend
-                wrapperStyle={{
-                  fontFamily: "Inter Tight",
-                  fontSize: 12,
-                  color: "#4a5260",
-                }}
-              />
-              {continuousParams.map((s) => (
-                <Line
-                  key={s.id}
-                  yAxisId={axisFor(s.parameter_name)}
-                  type="monotone"
-                  dataKey={s.parameter_name}
-                  stroke={paramColor(s.parameter_name, allParams)}
-                  dot={false}
-                  strokeWidth={1.5}
-                  connectNulls
-                  isAnimationActive={false}
-                />
-              ))}
-              {offlineParams.map((p) => (
-                <Scatter
-                  key={p}
-                  yAxisId={axisFor(p)}
-                  name={`${p} (offline)`}
-                  dataKey={`${p}__offline`}
-                  fill={paramColor(p, allParams)}
-                  shape="diamond"
-                />
-              ))}
-            </ComposedChart>
-          </ResponsiveContainer>
+        <div className={styles.chartCanvas}>
+          <svg viewBox="0 0 820 440" role="img" aria-label="Batch telemetry over time">
+            {(() => {
+              const width = 820;
+              const height = 440;
+              const margin = { top: 24, right: 28, bottom: 56, left: 64 };
+              const plotWidth = width - margin.left - margin.right;
+              const plotHeight = height - margin.top - margin.bottom;
+              const xMax = Math.max(336, ...chartData.map((row) => row.hours || 0));
+              const x = (hours: number) => margin.left + (hours / xMax) * plotWidth;
+              const traces = [
+                ...continuousParams.map((s) => ({ key: s.parameter_name, label: s.parameter_name, offline: false })),
+                ...offlineParams.map((p) => ({ key: `${p}__offline`, label: p, offline: true })),
+              ];
+              const yFor = (key: string, value: number) => {
+                const values = chartData
+                  .map((row) => row[key])
+                  .filter((item): item is number => typeof item === "number" && Number.isFinite(item));
+                const min = Math.min(...values);
+                const max = Math.max(...values);
+                const denom = max === min ? 1 : max - min;
+                return margin.top + plotHeight - ((value - min) / denom) * plotHeight;
+              };
+              return (
+                <>
+                  <rect x={margin.left} y={margin.top} width={plotWidth} height={plotHeight} fill="var(--bg-mute)" stroke="var(--rule)" />
+                  {[0, 48, 96, 144, 192, 240, 288, 336].map((tick) => (
+                    <g key={tick}>
+                      <line x1={x(tick)} y1={margin.top} x2={x(tick)} y2={margin.top + plotHeight} stroke="var(--rule)" />
+                      <text x={x(tick)} y={height - 28} textAnchor="middle" className={styles.svgAxisTick}>
+                        {tick}
+                      </text>
+                    </g>
+                  ))}
+                  {[0, 0.25, 0.5, 0.75, 1].map((tick) => {
+                    const y = margin.top + tick * plotHeight;
+                    return <line key={tick} x1={margin.left} y1={y} x2={margin.left + plotWidth} y2={y} stroke="var(--rule)" />;
+                  })}
+                  {traces.map((trace) => {
+                    const color = paramColor(trace.label, allParams);
+                    const points = chartData
+                      .filter((row) => typeof row[trace.key] === "number" && Number.isFinite(row[trace.key]))
+                      .map((row) => ({ hours: row.hours, value: row[trace.key] as number }));
+                    if (points.length === 0) return null;
+                    const path = points
+                      .map((point, index) => `${index === 0 ? "M" : "L"} ${x(point.hours)} ${yFor(trace.key, point.value)}`)
+                      .join(" ");
+                    return (
+                      <g key={trace.key}>
+                        {!trace.offline ? <path d={path} fill="none" stroke={color} strokeWidth={1.8} /> : null}
+                        {trace.offline
+                          ? points.map((point) => (
+                              <rect
+                                key={`${trace.key}-${point.hours}`}
+                                x={x(point.hours) - 3}
+                                y={yFor(trace.key, point.value) - 3}
+                                width={6}
+                                height={6}
+                                transform={`rotate(45 ${x(point.hours)} ${yFor(trace.key, point.value)})`}
+                                fill={color}
+                              />
+                            ))
+                          : null}
+                      </g>
+                    );
+                  })}
+                  <text x={margin.left + plotWidth / 2} y={height - 8} textAnchor="middle" className={styles.svgAxisLabel}>
+                    Hours since inoculation
+                  </text>
+                  <text x={20} y={margin.top + plotHeight / 2} textAnchor="middle" className={styles.svgAxisLabel} transform={`rotate(-90 20 ${margin.top + plotHeight / 2})`}>
+                    Normalized selected traces
+                  </text>
+                </>
+              );
+            })()}
+          </svg>
+          <div className={styles.chartLegend}>
+            {[...continuousParams.map((s) => s.parameter_name), ...offlineParams].map((name) => (
+              <span key={name}><i style={{ background: paramColor(name, allParams) }} /> {name}</span>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* QC alerts — server-authoritative results from BioprocessQCEngine.
           Hidden entirely if the engine returned only "pass" results. */}
       {serverQc.some((r) => r.status !== "pass") ? (
-        <>
+        <div data-tour="wetlab-qc-flag">
           <SectionRule
             eyebrow="QC alerts"
             title={`Alerts (${serverQc.filter((r) => r.status !== "pass").length})`}
@@ -572,7 +548,7 @@ export default function BatchTimelinePage() {
                 ))}
             </tbody>
           </DataTable>
-        </>
+        </div>
       ) : serverQc.length > 0 ? (
         <>
           <SectionRule
@@ -586,7 +562,7 @@ export default function BatchTimelinePage() {
       {/* Client-derived flags (cheap heuristic) — only shown when server QC
           is unavailable, so the page still has useful signal. */}
       {serverQc.length === 0 && qcFlags.length > 0 ? (
-        <>
+        <div data-tour="wetlab-qc-flag">
           <SectionRule
             eyebrow="QC (heuristic)"
             title={`Flags (${qcFlags.length})`}
@@ -620,7 +596,7 @@ export default function BatchTimelinePage() {
               ))}
             </tbody>
           </DataTable>
-        </>
+        </div>
       ) : null}
 
       {/* Outcome summary — 4 cards: Peak VCD / Final Titer / Min Viability / Run Duration */}

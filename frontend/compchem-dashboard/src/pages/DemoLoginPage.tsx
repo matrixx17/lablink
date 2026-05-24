@@ -15,8 +15,12 @@ export default function DemoLoginPage() {
     setLoading(true);
     setError(null);
     try {
-      const result = await api.demoLogin();
-      navigate(`/campaigns?org=${encodeURIComponent(result.org_id)}`);
+      const result = await api.resetAndEnterDemo("compchem");
+      if (result.redirect_url.startsWith("http")) {
+        window.location.assign(result.redirect_url);
+      } else {
+        navigate(result.redirect_url);
+      }
     } catch (err) {
       setError(err);
     } finally {

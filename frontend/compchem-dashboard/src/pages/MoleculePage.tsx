@@ -171,7 +171,7 @@ export default function MoleculePage() {
         </div>
       </Card>
 
-      <Card>
+      <Card className={styles.tourCardAnchor} data-tour="compchem-lineage">
         <h2>Computational History</h2>
         {lineageRuns.length === 0 ? <EmptyState>No runs recorded.</EmptyState> : (
           <div className={styles.lineageFlow}>

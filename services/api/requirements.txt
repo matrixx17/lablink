@@ -30,3 +30,4 @@ cryptography==45.0.3 # Encrypt hosted scoped credential payloads
 
 # Evidence Book PDF generation (BSD-3, no GPL deps) — both verticals
 reportlab==4.2.5
+qrcode[pil]==8.2

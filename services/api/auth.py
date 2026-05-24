@@ -8,11 +8,12 @@ import secrets
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
-from fastapi import Depends, HTTPException, Security
+from fastapi import Depends, Header, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session
 
 from database import ApiKey, SessionLocal
+from demo_sessions import DEMO_ORG_ID, demo_actor, get_demo_session
 
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
 AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "false").lower() == "true"
@@ -70,6 +71,7 @@ def get_db():
 
 def resolve_auth(
     api_key: Optional[str] = Security(API_KEY_HEADER),
+    authorization: Optional[str] = Header(None),
     org_id: Optional[str] = None,
     db: Session = Depends(get_db),
 ) -> Tuple[str, str]:
@@ -79,6 +81,16 @@ def resolve_auth(
     When AUTH_REQUIRED=false, org_id query param is accepted (legacy dev).
     When AUTH_REQUIRED=true, valid X-API-Key is mandatory.
     """
+    if authorization:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() == "demo" and token:
+            session = get_demo_session(token.strip())
+            if not session:
+                raise HTTPException(status_code=401, detail="Demo session expired. Restart the demo.")
+            if org_id and org_id != session.org_id:
+                raise HTTPException(status_code=403, detail="org_id does not match demo session scope")
+            return session.org_id, demo_actor(session.token)
+
     if api_key:
         record = verify_api_key(api_key, db)
         if record:
@@ -97,5 +109,5 @@ def resolve_auth(
 
 
 def require_org_access(requested_org: str, authenticated_org: str) -> None:
-    if requested_org != authenticated_org and AUTH_REQUIRED:
+    if requested_org != authenticated_org and (AUTH_REQUIRED or authenticated_org == DEMO_ORG_ID):
         raise HTTPException(status_code=403, detail="org_id does not match API key scope")
