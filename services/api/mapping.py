@@ -16,7 +16,19 @@ from sentence_transformers import SentenceTransformer
 # Configuration
 SIMILARITY_THRESHOLD = 0.65
 MODEL_NAME = "all-MiniLM-L6-v2"
-ONTOLOGY_PATH = Path(__file__).parent.parent.parent / "ontology" / "canonical_fields.yaml"
+def _default_ontology_path() -> Path:
+    """Resolve ontology in Docker (/app/ontology) and local dev (repo root)."""
+    candidates = [
+        Path(__file__).parent / "ontology" / "canonical_fields.yaml",
+        Path(__file__).parent.parent.parent / "ontology" / "canonical_fields.yaml",
+    ]
+    for path in candidates:
+        if path.is_file():
+            return path
+    return candidates[0]
+
+
+ONTOLOGY_PATH = _default_ontology_path()
 
 
 class OntologyMapper:

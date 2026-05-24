@@ -1,0 +1,4 @@
+smiles,molwt,logp,tpsa,numhdonors,numhacceptors,numrotatablebonds,qed
+"Cc1ccc(cc1)C(=O)Nc2ccncc2",212.25,2.31,54.6,1,3,2,0.78
+"Cc1ccc(cc1)C(=O)Nc2ccc(F)cc2",230.24,2.95,49.3,1,2,2,0.81
+"Cc1ccc(cc1)C(=O)Nc2cccc(Cl)c2",246.69,3.41,49.3,1,2,2,0.77

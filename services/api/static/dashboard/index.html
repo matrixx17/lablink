@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LabLink — Bioprocess Runs</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root { --bg: #0f1419; --card: #1a2332; --text: #e7ecf3; --muted: #8b9cb3; --accent: #3d8bfd; --warn: #f0ad4e; --fail: #e74c3c; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 1.5rem; }
+    h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+    .toolbar { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; margin-bottom: 1rem; }
+    input, select, button { background: var(--card); color: var(--text); border: 1px solid #2a3a52; padding: 0.5rem 0.75rem; border-radius: 6px; }
+    button { cursor: pointer; background: var(--accent); border-color: var(--accent); }
+    button.secondary { background: transparent; }
+    .grid { display: grid; grid-template-columns: 280px 1fr; gap: 1rem; min-height: 70vh; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .panel { background: var(--card); border-radius: 10px; padding: 1rem; overflow: auto; }
+    .run-item { padding: 0.6rem; border-radius: 6px; cursor: pointer; margin-bottom: 0.35rem; }
+    .run-item:hover, .run-item.active { background: #243044; }
+    .status-pass { color: #5cb85c; }
+    .status-warn { color: var(--warn); }
+    .status-fail { color: var(--fail); }
+    #chart-wrap { height: 360px; }
+    .finding { font-size: 0.85rem; padding: 0.4rem 0; border-bottom: 1px solid #2a3a52; }
+    .muted { color: var(--muted); font-size: 0.8rem; }
+    table { width: 100%; font-size: 0.85rem; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.35rem; border-bottom: 1px solid #2a3a52; }
+  </style>
+</head>
+<body>
+  <h1>LabLink Bioprocess Dashboard</h1>
+  <div class="toolbar">
+    <label>Org <input id="orgId" value="default-org" /></label>
+    <label>API Key <input id="apiKey" type="password" placeholder="optional in dev" style="min-width:200px" /></label>
+    <button id="refreshBtn">Refresh runs</button>
+    <button id="compareBtn" class="secondary">Compare selected</button>
+    <span class="muted">Read-only · ASM export at /api/v1/runs/{id}/normalized</span>
+  </div>
+  <div class="grid">
+    <div class="panel" id="runList"><p class="muted">Loading…</p></div>
+    <div class="panel">
+      <div id="runHeader"><p class="muted">Select a run</p></div>
+      <div id="chart-wrap"><canvas id="chart"></canvas></div>
+      <h3 style="margin-top:1rem;font-size:1rem">QC & domain findings</h3>
+      <div id="qcBox"></div>
+      <h3 style="margin-top:1rem;font-size:1rem">Alignment</h3>
+      <pre id="alignBox" class="muted" style="font-size:0.75rem;white-space:pre-wrap"></pre>
+      <h3 style="margin-top:1rem;font-size:1rem">Audit (run)</h3>
+      <div id="auditBox"></div>
+    </div>
+  </div>
+  <script>
+    const API = window.location.origin;
+    let chart = null;
+    let selectedRuns = [];
+    let currentRunId = null;
+
+    function headers() {
+      const h = { 'Content-Type': 'application/json' };
+      const key = document.getElementById('apiKey').value.trim();
+      if (key) h['X-API-Key'] = key;
+      return h;
+    }
+
+    async function api(path) {
+      const org = document.getElementById('orgId').value.trim();
+      const sep = path.includes('?') ? '&' : '?';
+      const r = await fetch(`${API}${path}${sep}org_id=${encodeURIComponent(org)}`, { headers: headers() });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+
+    function statusClass(s) {
+      if (!s) return '';
+      if (s === 'pass') return 'status-pass';
+      if (s === 'fail') return 'status-fail';
+      return 'status-warn';
+    }
+
+    async function loadRuns() {
+      const list = document.getElementById('runList');
+      try {
+        const runs = await api('/api/v1/runs');
+        list.innerHTML = runs.length ? '' : '<p class="muted">No runs yet. Ingest files with external_run_id.</p>';
+        runs.forEach(run => {
+          const el = document.createElement('div');
+          el.className = 'run-item' + (run.id === currentRunId ? ' active' : '');
+          const qc = run.qc?.overall_status || '—';
+          el.innerHTML = `<strong>${run.external_run_id}</strong><br>
+            <span class="muted">${run.bioreactor_id || '—'} · ${run.file_count} files</span><br>
+            <span class="${statusClass(qc)}">QC: ${qc}</span>`;
+          el.onclick = () => selectRun(run.id);
+          el.oncontextmenu = (e) => { e.preventDefault(); toggleCompare(run.id); };
+          list.appendChild(el);
+        });
+      } catch (e) {
+        list.innerHTML = `<p class="status-fail">${e.message}</p>`;
+      }
+    }
+
+    function toggleCompare(id) {
+      const i = selectedRuns.indexOf(id);
+      if (i >= 0) selectedRuns.splice(i, 1);
+      else if (selectedRuns.length < 2) selectedRuns.push(id);
+      else selectedRuns = [selectedRuns[1], id];
+    }
+
+    async function selectRun(id) {
+      currentRunId = id;
+      await loadRuns();
+      const org = document.getElementById('orgId').value.trim();
+      const [run, series, audit] = await Promise.all([
+        api(`/api/v1/runs/${id}`),
+        api(`/api/v1/runs/${id}/series`),
+        api(`/api/v1/runs/${id}/audit`),
+      ]);
+      document.getElementById('runHeader').innerHTML = `
+        <h2 style="margin:0;font-size:1.1rem">${run.external_run_id}</h2>
+        <p class="muted">Batch ${run.batch_id || '—'} · Campaign ${run.campaign_id || '—'} · ${run.status}</p>`;
+
+      const qc = run.qc || {};
+      let qcHtml = `<p class="${statusClass(qc.overall_status)}">${qc.summary || 'No QC yet'}</p>`;
+      (qc.domain_findings || []).forEach(f => {
+        qcHtml += `<div class="finding"><span class="${statusClass(f.severity)}">[${f.severity}]</span> ${f.message}</div>`;
+      });
+      document.getElementById('qcBox').innerHTML = qcHtml;
+      document.getElementById('alignBox').textContent = JSON.stringify(run.alignment || {}, null, 2);
+
+      let auditHtml = '<table><tr><th>Time</th><th>Action</th></tr>';
+      audit.forEach(a => {
+        auditHtml += `<tr><td>${a.timestamp}</td><td>${a.action}</td></tr>`;
+      });
+      document.getElementById('auditBox').innerHTML = auditHtml + '</table>';
+
+      plotSeries(series);
+    }
+
+    function plotSeries(series) {
+      const ctx = document.getElementById('chart');
+      if (chart) chart.destroy();
+      if (!series.length) return;
+      const datasets = series.slice(0, 6).map((s, i) => ({
+        label: `${s.field_name} (${s.data_kind})`,
+        data: (s.time_values || []).map((t, j) => ({ x: t, y: (s.values || [])[j] })),
+        borderColor: `hsl(${i * 55}, 70%, 55%)`,
+        tension: 0.15,
+        pointRadius: s.data_kind === 'discrete_offline' ? 5 : 0,
+      }));
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: { datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            x: { type: 'linear', title: { display: true, text: 'Time (h)' } },
+            y: { title: { display: true, text: 'Value' } },
+          },
+          plugins: { legend: { labels: { color: '#e7ecf3' } } },
+        },
+      });
+    }
+
+    async function compareRuns() {
+      if (selectedRuns.length !== 2) { alert('Select two runs (right-click)'); return; }
+      const [a, b] = await Promise.all(selectedRuns.map(id => api(`/api/v1/runs/${id}/series`)));
+      const ctx = document.getElementById('chart');
+      if (chart) chart.destroy();
+      const pick = (series, runLabel) => {
+        const s = series.find(x => /vcd|viable/i.test(x.field_name)) || series[0];
+        if (!s) return null;
+        return {
+          label: `${runLabel}: ${s.field_name}`,
+          data: (s.time_values || []).map((t, j) => ({ x: t, y: (s.values || [])[j] })),
+          tension: 0.15,
+        };
+      };
+      const datasets = [pick(a, 'A'), pick(b, 'B')].filter(Boolean);
+      chart = new Chart(ctx, {
+        type: 'line', data: { datasets },
+        options: { responsive: true, maintainAspectRatio: false,
+          scales: { x: { type: 'linear', title: { display: true, text: 'Time (h)' } } } },
+      });
+    }
+
+    document.getElementById('refreshBtn').onclick = loadRuns;
+    document.getElementById('compareBtn').onclick = compareRuns;
+    loadRuns();
+  </script>
+</body>
+</html>

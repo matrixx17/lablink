@@ -327,7 +327,26 @@ class FileProcessor:
             "instrument": result.instrument,
             "sample_id": result.metadata.get("sample_id"),
             "format_version": result.format_version,
+            "data_kind": getattr(result, "data_kind", "continuous"),
+            "time_column": getattr(result, "time_column", None),
+            "output_format": "asm",
         }
+
+        external_run = (
+            result.metadata.get("run_external_id")
+            or result.metadata.get("batch_id")
+            or os.environ.get("LABLINK_RUN_ID")
+        )
+        if external_run:
+            manifest["external_run_id"] = str(external_run)
+        if result.metadata.get("batch_id"):
+            manifest["batch_id"] = result.metadata["batch_id"]
+        if result.metadata.get("bioreactor_id"):
+            manifest["bioreactor_id"] = result.metadata["bioreactor_id"]
+
+        points = getattr(result, "series_points", None) or []
+        if points:
+            manifest["series_points"] = points[:25000]
 
         if result.metadata:
             manifest["parsed_metadata"] = result.metadata

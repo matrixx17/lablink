@@ -20,7 +20,14 @@ from alembic import context
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import database models and Base
-from database import Base, FileRecord, WebhookSubscription, AuditLog, Baseline
+from database import (
+    Base, FileRecord, WebhookSubscription, AuditLog, Baseline,
+    RunRecord, MeasurementSeries, ApiKey,
+)
+from compchem_models import (  # noqa: F401
+    Organization, OrgCredential, OrgUser, Project, Campaign, DockingGrid, Run, RunInput, RunOutput, RunMetric,
+    Molecule, MoleculeProperty, AssayResult, AuditEvent, RunLineage,
+)
 
 # Alembic Config object
 config = context.config

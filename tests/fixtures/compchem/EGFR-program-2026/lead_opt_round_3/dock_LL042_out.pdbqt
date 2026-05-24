@@ -1,0 +1,16 @@
+REMARK VINA RESULT:     -9.2      0.000      0.000
+REMARK  9 active torsions:
+REMARK  Name = LL-042 docked to EGFR ATP pocket
+MODEL 1
+ATOM      1  C   LIG A   1      -1.234   2.345   3.456  1.00  0.00     0.000 A
+ATOM      2  C   LIG A   1      -0.234   2.245   3.156  1.00  0.00     0.000 A
+ENDMDL
+REMARK VINA RESULT:     -8.7      1.234      2.345
+MODEL 2
+ATOM      1  C   LIG A   1      -1.134   2.245   3.356  1.00  0.00     0.000 A
+ATOM      2  C   LIG A   1      -0.334   2.345   3.256  1.00  0.00     0.000 A
+ENDMDL
+REMARK VINA RESULT:     -8.3      1.789      2.890
+MODEL 3
+ATOM      1  C   LIG A   1      -1.034   2.345   3.256  1.00  0.00     0.000 A
+ENDMDL

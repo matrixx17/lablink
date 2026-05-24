@@ -1,0 +1,188 @@
+/*
+  Unified shell. Same rules apply to both verticals so the two
+  dashboards look identical except for content.
+*/
+
+.shell {
+  display: grid;
+  grid-template-columns: var(--rail) 1fr;
+  min-height: 100vh;
+}
+
+/* ---- Sidebar ------------------------------------------------------- */
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  padding: 36px 28px;
+  border-right: 1px solid var(--rule);
+  background: var(--bg);
+}
+
+.brand {
+  display: block;
+  text-decoration: none;
+}
+
+.wordmark {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 26px;
+  line-height: 1;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+}
+
+.wordmark em {
+  font-style: italic;
+  color: var(--ink-3);
+}
+
+.brandSub {
+  margin-top: 6px;
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0 -8px;
+}
+
+.nav a {
+  position: relative;
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: var(--ink-2);
+  font-size: 14px;
+  font-weight: 500;
+  transition: color 100ms ease, background 100ms ease;
+}
+
+.nav a:hover {
+  color: var(--ink);
+  background: var(--bg-elev-2);
+}
+
+.nav a[aria-current="page"] {
+  color: var(--ink);
+  background: var(--bg-elev-2);
+}
+
+.nav a[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: -28px;
+  top: 50%;
+  width: 16px;
+  height: 1px;
+  background: var(--ink);
+  transform: translateY(-0.5px);
+}
+
+.navGroupLabel {
+  font-family: var(--body);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--ink-4);
+  padding: 0 12px;
+  margin: 16px 0 8px;
+}
+
+.orgBox {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.orgBox label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink-4);
+}
+
+.orgBox input {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.footerNote {
+  font-size: 11.5px;
+  color: var(--ink-4);
+  line-height: 1.5;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+
+/* ---- Main content area ------------------------------------------- */
+
+.main {
+  min-width: 0;
+  padding: 56px var(--pad-x) 96px;
+}
+
+.mainInner {
+  max-width: var(--max);
+  margin: 0 auto;
+}
+
+/* ---- Demo banner (kept; restyled to fit) ------------------------- */
+
+.demoBanner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  margin: 0 auto 28px;
+  max-width: var(--max);
+  border: 1px solid var(--rule-2);
+  background: var(--bg-mute);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.demoBanner strong { color: var(--ink); }
+
+/* ---- Mobile ------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidebar {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    padding: 18px 22px;
+    border-right: none;
+    border-bottom: 1px solid var(--rule);
+    gap: 18px;
+  }
+  .nav {
+    flex-direction: row;
+    margin: 0;
+  }
+  .navGroupLabel, .footerNote, .brandSub { display: none; }
+  .orgBox { margin-top: 0; flex-direction: row; align-items: center; }
+  .orgBox label { font-size: 11px; }
+  .main { padding: 32px 22px 64px; }
+  .nav a[aria-current="page"]::before { display: none; }
+}
+
+@media print {
+  .shell { display: block; }
+  .sidebar { display: none; }
+  .main { padding: 0; }
+  .demoBanner { display: none; }
+}

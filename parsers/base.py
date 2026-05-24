@@ -47,6 +47,12 @@ class ParsedResult:
     raw_stats: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     # Structure: {column_name: {"mean": x, "std": y, "min": z, "max": w, "values": [...]}}
 
+    # Bioprocess: continuous controller log vs discrete offline sample
+    data_kind: str = "continuous"  # continuous | discrete_offline
+    time_column: Optional[str] = None
+    # Time-aligned points for DB persistence: [{t, field, value, unit?}, ...]
+    series_points: List[Dict[str, Any]] = field(default_factory=list)
+
     # Any issues encountered during parsing
     parse_warnings: List[str] = field(default_factory=list)
 
@@ -64,6 +70,9 @@ class ParsedResult:
             "headers": self.headers,
             "row_count": len(self.data) if self.data is not None else 0,
             "raw_stats": self.raw_stats,
+            "data_kind": self.data_kind,
+            "time_column": self.time_column,
+            "series_points": self.series_points,
             "parse_warnings": self.parse_warnings,
             "source_file": self.source_file,
             "file_size_bytes": self.file_size_bytes,
@@ -181,10 +190,62 @@ class BaseParser(ABC):
                     "max": float(series_float.max()),
                     "n": len(series_float),
                     "null_count": int(df[col].isna().sum()),
-                    "values": values_list[:max_values],  # Cap for payload size
+                    "values": values_list[:max_values],  # Cap for manifest payload
                 }
 
         return stats
+
+    def build_series_points(
+        self,
+        df: pd.DataFrame,
+        time_column: Optional[str] = None,
+        max_points: int = 50000,
+    ) -> List[Dict[str, Any]]:
+        """Extract time-aligned measurement points for run-level persistence."""
+        if df is None or df.empty:
+            return []
+
+        time_col = time_column
+        if time_col is None:
+            for candidate in df.columns:
+                cl = str(candidate).lower()
+                if cl in ("time", "time_h", "time [h]", "elapsed", "elapsed time", "timestamp"):
+                    time_col = candidate
+                    break
+                if "time" in cl and pd.api.types.is_numeric_dtype(df[candidate]):
+                    time_col = candidate
+                    break
+
+        points: List[Dict[str, Any]] = []
+        n_rows = min(len(df), max_points)
+
+        for idx in range(n_rows):
+            row = df.iloc[idx]
+            t_val = None
+            if time_col and time_col in df.columns:
+                try:
+                    t_val = float(row[time_col])
+                except (TypeError, ValueError):
+                    t_val = None
+
+            for col in df.columns:
+                if col == time_col:
+                    continue
+                if not pd.api.types.is_numeric_dtype(df[col]):
+                    continue
+                val = row[col]
+                if pd.isna(val):
+                    continue
+                try:
+                    points.append({
+                        "t": t_val if t_val is not None else float(idx),
+                        "field": str(col),
+                        "value": float(val),
+                    })
+                except (TypeError, ValueError):
+                    continue
+
+        return points
 
     def _read_file_safely(
         self,

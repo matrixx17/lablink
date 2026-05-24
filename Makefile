@@ -136,6 +136,15 @@ migrate: ## Run database migrations
 	@echo "$(GREEN)Running database migrations...$(NC)"
 	docker compose exec api alembic upgrade head
 
+migrate-repair: ## Stamp existing init_db schema at 001, then apply 002 (fixes DuplicateTable)
+	@echo "$(YELLOW)Repairing Alembic history for existing database...$(NC)"
+	@echo "$(YELLOW)Marking 001_initial as applied (tables already exist from init_db)...$(NC)"
+	docker compose exec api alembic stamp 001_initial
+	@echo "$(GREEN)Applying bioprocess migration 002...$(NC)"
+	docker compose exec api alembic upgrade head
+	@echo "$(GREEN)Done. Current revision:$(NC)"
+	docker compose exec api alembic current
+
 migrate-down: ## Rollback last migration
 	@echo "$(YELLOW)Rolling back last migration...$(NC)"
 	docker compose exec api alembic downgrade -1
@@ -173,6 +182,15 @@ test-cov: ## Run tests with coverage
 test-watch: ## Run tests in watch mode
 	@echo "$(GREEN)Running tests in watch mode...$(NC)"
 	docker compose exec api pytest-watch
+
+compchem-ui-install: ## Install comp-chem React dashboard dependencies
+	cd frontend/compchem-dashboard && npm install
+
+compchem-ui-dev: ## Start comp-chem React dashboard on http://localhost:5173
+	cd frontend/compchem-dashboard && npm run dev
+
+compchem-ui-build: ## Build comp-chem React dashboard
+	cd frontend/compchem-dashboard && npm run build
 
 lint: ## Run linting
 	@echo "$(GREEN)Running linter...$(NC)"

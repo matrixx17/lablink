@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moltrack-parsers"
+version = "0.1.0"
+description = "Standalone computational chemistry file parsers for MolTrack/LabLink"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+chem = ["rdkit>=2024.3.5", "cclib>=1.8.1", "MDAnalysis>=2.7.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

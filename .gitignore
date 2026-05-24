@@ -131,7 +131,17 @@ models/
 *.zip
 *.whl
 
+# Frontend
+node_modules/
+frontend/**/node_modules/
+frontend/**/dist/
+frontend/**/.vite/
+frontend/**/*.tsbuildinfo
+
 # ----------------------------------------
 # Claude/AI
 # ----------------------------------------
 .claude/
+JZ.md
+CLAUDE.md
+CHANGELOG.md

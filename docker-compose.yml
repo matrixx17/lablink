@@ -17,6 +17,7 @@ services:
     environment:
       - LOG_LEVEL=DEBUG
       - JSON_LOGS=false
+      - ONTOLOGY_PATH=/app/ontology/canonical_fields.yaml
     ports:
       - "8000:8000"
     depends_on:
@@ -114,6 +115,28 @@ services:
         reservations:
           memory: 128M
           cpus: '0.1'
+    networks:
+      - lablink-network
+
+  # ----------------------------------------
+  # Frontend (Vite dev server)
+  # ----------------------------------------
+  frontend:
+    build:
+      context: ./frontend/compchem-dashboard
+      dockerfile: Dockerfile
+    container_name: lablink-frontend
+    ports:
+      - "3000:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - VITE_API_PROXY_TARGET=http://api:8000
+    volumes:
+      - ./frontend/compchem-dashboard:/app
+      - /app/node_modules
+    depends_on:
+      - api
+    restart: unless-stopped
     networks:
       - lablink-network
 

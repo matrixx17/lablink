@@ -1,0 +1,15 @@
+org_id: acme-pharma
+project: EGFR-program-2026
+campaign: lead_opt_round_3
+
+molecule_smiles: "Cc1ccc(cc1)C(=O)Nc2ccncc2"
+molecule_name: "LL-042"
+molecule_external_id: "LL-042"
+
+run:
+  software_name: AutoDock Vina
+  forcefield: AMBER ff19SB
+  compute_environment: hpc_slurm
+  cluster_name: discovery
+
+notes: "Round 3 — narrow series around mol-019 scaffold"
