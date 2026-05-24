@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session
 from auth import resolve_auth, require_org_access, verify_api_key
 from compchem_bco import build_bco
 from compchem_ingest import ingest_run_manifest
-from evidence_book import build_evidence_book, EvidenceBookTooLarge
+from evidence_book_compchem import build_evidence_book, EvidenceBookTooLarge
 from demo_seed import (
     DEMO_ADMIN_EMAIL,
     DEMO_ADMIN_PASSWORD,

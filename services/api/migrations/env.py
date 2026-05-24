@@ -23,9 +23,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import (
     Base, FileRecord, WebhookSubscription, AuditLog, Baseline,
     RunRecord, MeasurementSeries, ApiKey,
+    Campaign, Batch, TimeseriesData, OfflineSample,
 )
 from compchem_models import (  # noqa: F401
-    Organization, OrgCredential, OrgUser, Project, Campaign, DockingGrid, Run, RunInput, RunOutput, RunMetric,
+    Organization, OrgCredential, OrgUser, Project,
+    Campaign as CCCampaign,  # cc_campaigns table; distinct from database.Campaign
+    DockingGrid, Run, RunInput, RunOutput, RunMetric,
     Molecule, MoleculeProperty, AssayResult, AuditEvent, RunLineage,
 )
 

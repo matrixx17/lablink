@@ -192,6 +192,18 @@ compchem-ui-dev: ## Start comp-chem React dashboard on http://localhost:5173
 compchem-ui-build: ## Build comp-chem React dashboard
 	cd frontend/compchem-dashboard && npm run build
 
+wetlab-ui-install: ## Install wet-lab React dashboard dependencies
+	cd frontend/wetlab-dashboard && npm install
+
+wetlab-ui-dev: ## Start wet-lab React dashboard on http://localhost:5174
+	cd frontend/wetlab-dashboard && npm run dev
+
+wetlab-ui-build: ## Build wet-lab React dashboard
+	cd frontend/wetlab-dashboard && npm run build
+
+wetlab-seed: ## Seed demo wet lab campaign (requires Postgres on localhost:5432)
+	POSTGRES_HOST=localhost python scripts/seed_demo_wetlab.py
+
 lint: ## Run linting
 	@echo "$(GREEN)Running linter...$(NC)"
 	docker compose exec api ruff check .

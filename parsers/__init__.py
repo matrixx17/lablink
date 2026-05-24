@@ -34,6 +34,11 @@ from .bioprocess_platform import (
     BeckmanViCellParser,
     BioprocessOfflineParser,
 )
+from .wetlab import (
+    AktaCsvParser,
+    GenericBioprocessCsvParser,
+    GenericOfflineSampleCsvParser,
+)
 
 # Registry of available parsers
 # Order matters: specialized parsers should be listed before generic ones
@@ -47,6 +52,11 @@ _PARSER_REGISTRY: List[Type[BaseParser]] = [
     SartoriusBiostatParser,
     EppendorfBioFloParser,
     CytivaBioreactorParser,
+    # Specialised chromatography
+    AktaCsvParser,
+    # Wet-lab canonical-name fallbacks — match before GenericCSVParser
+    GenericOfflineSampleCsvParser,
+    GenericBioprocessCsvParser,
     GenericCSVParser,
 ]
 
