@@ -20,6 +20,12 @@
 }
 
 .lablinkTourStep .shepherd-title {
+  /* Override Shepherd's default `display: flex; flex: 1 0 auto`, which keeps
+     long titles on one line and overflows the card. */
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: break-word;
   font-family: var(--display);
   font-size: 28px;
   font-weight: 400;

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import Shepherd from "shepherd.js";
 import "shepherd.js/dist/css/shepherd.css";
@@ -235,11 +236,14 @@ export default function DemoTour({ orgId }: { orgId: string }) {
   useEffect(() => {
     if (tourState.status !== "idle" || orgId !== "demo-therapeutics") return;
     const campaignId = campaignIdFromPath(location.pathname);
-    if (!campaignId) return;
-    resolveCampaign({ status: "active", stepIndex: 0, campaignId })
+    if (!campaignId || tourState.campaignId === campaignId) return;
+    // Pre-resolve campaign context so the launcher is ready, but stay idle so
+    // the "Start guided tour" button remains visible until the visitor clicks
+    // it — the tour should not auto-start and hide its own launcher.
+    resolveCampaign({ status: "idle", stepIndex: 0, campaignId })
       .then(persist)
       .catch(() => undefined);
-  }, [location.pathname, orgId, tourState.status]);
+  }, [location.pathname, orgId, tourState.status, tourState.campaignId]);
 
   useEffect(() => {
     if (tourState.status !== "active") return;
@@ -340,7 +344,8 @@ export default function DemoTour({ orgId }: { orgId: string }) {
           Start guided tour
         </button>
       ) : null}
-      {finishOpen ? (
+      {finishOpen
+        ? createPortal(
         <div className={styles.tourModalBackdrop} role="presentation">
           <div className={styles.tourModalCard} role="dialog" aria-modal="true" aria-labelledby="lablink-tour-complete">
             <h2 id="lablink-tour-complete">That's LabLink</h2>
@@ -362,8 +367,10 @@ export default function DemoTour({ orgId }: { orgId: string }) {
               </a>
             </p>
           </div>
-        </div>
-      ) : null}
+        </div>,
+            document.body
+          )
+        : null}
     </>
   );
 }
