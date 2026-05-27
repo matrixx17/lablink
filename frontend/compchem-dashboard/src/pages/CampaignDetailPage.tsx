@@ -13,6 +13,7 @@ import { useOrgId, withOrg } from "../components/Layout";
 import {
   ActionBar,
   DataTable,
+  DetailLayout,
   EmptyState,
   ErrorBox,
   fmtDate,
@@ -23,6 +24,7 @@ import {
   SecondaryButton,
   SectionRule,
   StatusBadge,
+  Storyboard,
 } from "../components/ui";
 import { downloadBcoExport } from "../lib/bcoExport";
 import { downloadEvidenceBook } from "../lib/evidenceBook";
@@ -220,6 +222,21 @@ export default function CampaignDetailPage() {
   const showBcoExport = !campaign.domain || campaign.domain === "compchem";
 
   return (
+    <DetailLayout
+      storyboard={
+        <Storyboard
+          title={campaign.name}
+          status={<StatusBadge status={campaign.status} />}
+          rows={[
+            { label: "Target", value: campaign.target_name || "—" },
+            { label: "Type", value: campaign.campaign_type },
+            { label: "Lead", value: lead ? (lead.name || lead.external_id || `Molecule ${lead.id}`) : (campaign.lead_molecule_id ? `#${campaign.lead_molecule_id}` : "—") },
+            { label: "Runs", value: campaign.run_count },
+            { label: "Compounds", value: campaign.molecule_count },
+          ]}
+        />
+      }
+    >
     <div className={styles.grid}>
       {toast ? (
         <div className={styles.toast} role="status" aria-live="polite">
@@ -533,5 +550,6 @@ export default function CampaignDetailPage() {
         </DataTable>
       )}
     </div>
+    </DetailLayout>
   );
 }
