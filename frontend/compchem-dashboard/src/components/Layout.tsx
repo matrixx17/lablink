@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useSearchParams } from "react-router-dom";
 import { api, OrgInfo } from "../api/client";
 import { getDemoSession } from "../lib/demoSession";
@@ -48,6 +48,8 @@ export function withOrg(path: string, orgId: string) {
   return `${prefixed}${prefixed.includes("?") ? "&" : "?"}org=${encodeURIComponent(orgId)}`;
 }
 
+type Tab = { label: string; to: string; end?: boolean };
+
 export default function Layout() {
   const { orgId, setOrgId } = useOrgId();
   const location = useLocation();
@@ -90,7 +92,6 @@ export default function Layout() {
   };
 
   const demoMinutes = demoRemainingMs == null ? null : Math.ceil(demoRemainingMs / 60_000);
-  const demoExpiring = demoMinutes != null && demoMinutes < 10;
   const demoHours = demoMinutes == null ? 0 : Math.floor(demoMinutes / 60);
   const demoMins = demoMinutes == null ? 0 : demoMinutes % 60;
 
@@ -102,77 +103,94 @@ export default function Layout() {
     ? "v0.1 · evidence-grade bioprocess provenance"
     : "v0.1 · evidence-grade computational provenance";
 
+  const campaignId = useMemo(() => {
+    const m = location.pathname.match(/\/campaigns\/([^/?]+)/);
+    return m ? m[1] : null;
+  }, [location.pathname]);
+
+  const tabs: Tab[] = useMemo(() => {
+    if (!campaignId) {
+      return [{ label: "Campaigns", to: vertical === "wetlab" ? "/wetlab/campaigns" : "/campaigns", end: true }];
+    }
+    if (vertical === "wetlab") {
+      const b = `/wetlab/campaigns/${campaignId}`;
+      return [
+        { label: "Overview", to: b, end: true },
+        { label: "Audit Trail", to: `${b}/audit` },
+        { label: "Methods", to: `${b}/methods` },
+      ];
+    }
+    const b = `/campaigns/${campaignId}`;
+    return [
+      { label: "Chart Review", to: b, end: true },
+      { label: "Molecules", to: `${b}/molecules` },
+      { label: "SAR Explorer", to: `${b}/sar` },
+      { label: "Audit Trail", to: `${b}/audit` },
+      { label: "Methods", to: `${b}/methods-export` },
+    ];
+  }, [campaignId, vertical]);
+
+  const TourEl = vertical === "wetlab" ? WetlabDemoTour : CompchemDemoTour;
+
   return (
     <div className={styles.shell}>
-      <aside className={styles.sidebar}>
+      <header className={styles.band}>
         <Link to={homePath} className={styles.brand}>
-          <div className={styles.wordmark}>
-            LabLink<em>.</em>
-          </div>
-          <div className={styles.brandSub}>{brandSub}</div>
+          <span className={styles.wordmark}>LabLink</span>
+          <span className={styles.brandSub}>{brandSub}</span>
         </Link>
 
-        <div className={styles.verticalSwitcher} role="tablist" aria-label="Switch vertical">
-          <Link
-            to={compchemHome}
-            role="tab"
-            aria-selected={vertical === "compchem"}
-            className={vertical === "compchem" ? styles.verticalSwitcherActive : styles.verticalSwitcherInactive}
-          >
-            Comp Chem
-          </Link>
-          <Link
-            to={wetlabHome}
-            role="tab"
-            aria-selected={vertical === "wetlab"}
-            className={vertical === "wetlab" ? styles.verticalSwitcherActive : styles.verticalSwitcherInactive}
-          >
-            Wet Lab
-          </Link>
-        </div>
+        <div className={styles.bandRight}>
+          <div className={styles.vertSwitch} role="tablist" aria-label="Switch vertical">
+            <Link
+              to={compchemHome}
+              role="tab"
+              aria-selected={vertical === "compchem"}
+              className={vertical === "compchem" ? styles.vertActive : styles.vertInactive}
+            >
+              Comp Chem
+            </Link>
+            <Link
+              to={wetlabHome}
+              role="tab"
+              aria-selected={vertical === "wetlab"}
+              className={vertical === "wetlab" ? styles.vertActive : styles.vertInactive}
+            >
+              Wet Lab
+            </Link>
+          </div>
 
-        <div>
-          <div className={styles.navGroupLabel}>Workspace</div>
-          <nav className={styles.nav}>
-            <NavLink to={withOrg("/campaigns", orgId)} end>Campaigns</NavLink>
-            {vertical === "wetlab" ? (
-              <WetlabDemoTour orgId={orgId} />
-            ) : (
-              <CompchemDemoTour orgId={orgId} />
-            )}
-          </nav>
-          {(org?.demo_mode || demoMinutes != null) ? (
-            <div className={styles.demoShareNav}>
-              <button type="button" onClick={shareDemo}>Share this demo</button>
-              {shareMessage ? <p>{shareMessage}</p> : null}
-            </div>
-          ) : null}
-        </div>
-
-        <div className={styles.orgBox}>
           {demoMinutes != null ? (
-            <div className={`${styles.demoChip} ${demoExpiring ? styles.demoChipExpiring : ""}`}>
-              {demoExpiring ? (
-                <>
-                  <span>Demo expiring —</span>
-                  <button type="button" onClick={restartDemo}>Restart demo</button>
-                </>
-              ) : (
-                <span>Demo Mode — {demoHours}h {demoMins.toString().padStart(2, "0")}m remaining</span>
-              )}
-            </div>
+            <span className={styles.demoChip}>Demo Mode — {demoHours}h {demoMins.toString().padStart(2, "0")}m</span>
           ) : null}
-          <label htmlFor="org">Organization</label>
-          <input
-            id="org"
-            value={orgId}
-            onChange={(event) => setOrgId(event.target.value)}
-            placeholder="default-org"
-          />
-        </div>
 
-        <div className={styles.footerNote}>{footerNote}</div>
-      </aside>
+          {(org?.demo_mode || demoMinutes != null) ? (
+            <button type="button" className={styles.bandButton} onClick={shareDemo}>Share</button>
+          ) : null}
+          {demoMinutes != null ? (
+            <button type="button" className={styles.bandButton} onClick={restartDemo}>Restart</button>
+          ) : null}
+
+          <span className={styles.orgTag} title="Organization">{orgId}</span>
+        </div>
+      </header>
+
+      <nav className={styles.tabstrip} aria-label="Activities">
+        {tabs.map((t) => (
+          <NavLink
+            key={t.to}
+            to={withOrg(t.to, orgId)}
+            end={t.end}
+            className={({ isActive }) => (isActive ? styles.tabActive : styles.tab)}
+          >
+            {t.label}
+          </NavLink>
+        ))}
+        <span className={styles.tabSpacer} />
+        <div className={styles.tourSlot}>
+          <TourEl orgId={orgId} />
+        </div>
+      </nav>
 
       <main className={styles.main}>
         {org?.demo_mode ? (
@@ -181,10 +199,20 @@ export default function Layout() {
             <span>Data resets periodically. Create a free workspace to use your own.</span>
           </div>
         ) : null}
+        {shareMessage ? <div className={styles.shareToast}>{shareMessage}</div> : null}
         <div className={styles.mainInner}>
           <Outlet />
         </div>
       </main>
+
+      <footer className={styles.statusbar}>
+        <span>{demoMinutes != null ? `Demo Mode — ${demoHours}h ${demoMins.toString().padStart(2, "0")}m remaining` : "Connected"}</span>
+        <span className={styles.statusMid}>{footerNote}</span>
+        <span>
+          <label htmlFor="org" className={styles.orgLabel}>Org</label>
+          <input id="org" className={styles.orgInput} value={orgId} onChange={(e) => setOrgId(e.target.value)} />
+        </span>
+      </footer>
     </div>
   );
 }

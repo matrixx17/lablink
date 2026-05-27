@@ -4,130 +4,112 @@
 */
 
 .shell {
-  display: grid;
-  grid-template-columns: var(--rail) 1fr;
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
 }
 
-/* ---- Sidebar ------------------------------------------------------- */
-
-.sidebar {
-  position: sticky;
-  top: 0;
-  align-self: start;
-  height: 100vh;
+/* ---- Top band ---- */
+.band {
   display: flex;
-  flex-direction: column;
-  gap: 36px;
-  padding: 36px 28px;
-  border-right: 1px solid var(--rule);
-  background: var(--bg);
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--band);
+  color: #fff;
+  padding: 4px 12px;
+  height: 32px;
 }
+.brand { display: flex; align-items: baseline; gap: 8px; color: #fff; }
+.brand:hover { text-decoration: none; }
+.wordmark { font-weight: 700; font-size: 13px; letter-spacing: 0.2px; }
+.brandSub { font-size: 10px; opacity: 0.8; }
 
-.brand {
-  display: block;
-  text-decoration: none;
+.bandRight { display: flex; align-items: center; gap: 8px; font-size: 10.5px; }
+.vertSwitch { display: flex; border: 1px solid rgba(255,255,255,0.35); border-radius: var(--radius); overflow: hidden; }
+.vertActive, .vertInactive { padding: 1px 9px; color: #fff; }
+.vertActive { background: #fff; color: var(--band); font-weight: 600; }
+.vertActive:hover, .vertInactive:hover { text-decoration: none; }
+.vertInactive:hover { background: rgba(255,255,255,0.15); }
+
+.demoChip { background: rgba(255,255,255,0.16); padding: 1px 8px; border-radius: var(--radius); }
+.bandButton {
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.35);
+  color: #fff;
+  padding: 1px 9px;
+  border-radius: var(--radius);
+  cursor: pointer;
 }
+.bandButton:hover { background: rgba(255,255,255,0.24); }
+.orgTag { font-family: var(--mono); opacity: 0.85; }
 
-.wordmark {
-  font-family: var(--display);
-  font-weight: 400;
-  font-size: 26px;
-  line-height: 1;
-  letter-spacing: -0.025em;
-  color: var(--ink);
-}
-
-.wordmark em {
-  font-style: italic;
-  color: var(--ink-3);
-}
-
-.brandSub {
-  margin-top: 6px;
-  font-size: 11.5px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-
-.nav {
+/* ---- Activity tab strip ---- */
+.tabstrip {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
-  margin: 0 -8px;
+  align-items: stretch;
+  background: var(--tabstrip);
+  border-bottom: 1px solid var(--band-strong);
+  font-size: 11px;
 }
+.tab, .tabActive {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  color: #cfe2f3;
+}
+.tab:hover { background: rgba(255,255,255,0.10); color: #fff; text-decoration: none; }
+.tabActive { background: var(--bg-elev); color: var(--band); font-weight: 600; }
+.tabActive:hover { text-decoration: none; }
+.tabSpacer { flex: 1; }
+.tourSlot { display: flex; align-items: center; padding-right: 8px; }
 
-.nav a {
-  position: relative;
-  padding: 8px 12px;
-  border-radius: 6px;
+/* ---- Main ---- */
+.main { flex: 1; background: var(--bg); }
+.mainInner { max-width: var(--max); margin: 0 auto; padding: 10px var(--pad-x) 16px; }
+.demoBanner {
+  display: flex; gap: 8px; align-items: center;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--rule-2);
   color: var(--ink-2);
-  font-size: 14px;
-  font-weight: 500;
-  transition: color 100ms ease, background 100ms ease;
+  padding: 4px var(--pad-x);
+  font-size: 10.5px;
+}
+.shareToast {
+  margin: 8px var(--pad-x) 0;
+  background: var(--good-soft); color: var(--good);
+  border: 1px solid var(--good); border-radius: var(--radius);
+  padding: 4px 8px; font-size: 10.5px;
 }
 
-.nav a:hover {
-  color: var(--ink);
-  background: var(--bg-elev-2);
+/* ---- Status bar ---- */
+.statusbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--bg-mute);
+  border-top: 1px solid var(--rule-2);
+  color: var(--ink-3);
+  padding: 2px 12px;
+  font-size: 10px;
 }
+.statusMid { color: var(--ink-4); }
+.orgLabel { margin-right: 5px; text-transform: uppercase; letter-spacing: 0.06em; }
+.orgInput { padding: 0 5px; font-size: 10px; width: 150px; height: 16px; }
 
-.nav a[aria-current="page"] {
-  color: var(--ink);
-  background: var(--bg-elev-2);
-}
-
-.nav a[aria-current="page"]::before {
-  content: "";
-  position: absolute;
-  left: -28px;
-  top: 50%;
-  width: 16px;
-  height: 1px;
-  background: var(--ink);
-  transform: translateY(-0.5px);
-}
-
+/* ---- Tour launcher / restart (rendered in the tab strip) ---- */
 .navTourButton {
-  position: relative;
-  width: 100%;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--ink-2);
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  text-align: left;
-  transition: color 100ms ease, background 100ms ease;
+  border: 1px solid var(--rule-2); background: #f3f7fb; color: var(--accent);
+  padding: 1px 8px; border-radius: var(--radius); cursor: pointer; font-size: 10.5px;
 }
-
-.navTourButton:hover {
-  color: var(--ink);
-  background: var(--bg-elev-2);
-}
-
+.navTourButton:hover { background: var(--accent-soft); }
 .floatingTourButton {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 25;
-  border: 1px solid var(--rule-2);
-  border-radius: 999px;
-  background: var(--bg-elev);
-  color: var(--ink);
-  cursor: pointer;
-  font-size: 13.5px;
-  font-weight: 500;
-  padding: 10px 16px;
-  box-shadow: 0 14px 40px rgba(20, 24, 31, 0.12);
+  position: fixed; right: 16px; bottom: 28px; z-index: 25;
+  border: 1px solid var(--accent); background: var(--accent); color: #fff;
+  padding: 5px 12px; border-radius: var(--radius); cursor: pointer;
+  font-size: 11px; box-shadow: 0 6px 18px rgba(10,77,140,0.28);
 }
+.floatingTourButton:hover { background: var(--accent-strong); }
 
-.floatingTourButton:hover {
-  border-color: var(--ink);
-}
+/* ---- Tour finish modal (DO NOT modify — restyled in a later task) ---- */
 
 .tourModalBackdrop {
   position: fixed;
@@ -204,209 +186,4 @@
 .tourModalFootnote a {
   color: var(--ink);
   border-bottom: 1px solid var(--rule-3);
-}
-
-.navGroupLabel {
-  font-family: var(--body);
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--ink-4);
-  padding: 0 12px;
-  margin: 16px 0 8px;
-}
-
-.orgBox {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.orgBox label {
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  color: var(--ink-4);
-}
-
-.orgBox input {
-  font-family: var(--mono);
-  font-size: 12.5px;
-}
-
-.demoChip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 7px 9px;
-  border: 1px solid #d7a948;
-  border-radius: 999px;
-  background: #fff7df;
-  color: #6b4b00;
-  font-size: 11.5px;
-  line-height: 1.2;
-}
-
-.demoChipExpiring {
-  border-color: #cf5d4b;
-  background: #fff0ed;
-  color: #8b2319;
-}
-
-.demoChip button {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  padding: 0;
-  font: inherit;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-
-.demoShareNav {
-  margin-top: 14px;
-  padding: 12px;
-  border: 1px solid var(--rule);
-  border-radius: 10px;
-  background: var(--bg-mute);
-}
-
-.demoShareNav button {
-  width: 100%;
-  padding: 8px 12px;
-  border: 1px solid var(--rule-2);
-  border-radius: 999px;
-  background: var(--bg-elev);
-  color: var(--ink);
-  font: inherit;
-  font-size: 12.5px;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.demoShareNav button:hover {
-  border-color: var(--ink);
-}
-
-.demoShareNav p {
-  margin: 8px 0 0;
-  color: var(--ink-3);
-  font-size: 11.5px;
-  line-height: 1.4;
-}
-
-.footerNote {
-  font-size: 11.5px;
-  color: var(--ink-4);
-  line-height: 1.5;
-  padding-top: 12px;
-  border-top: 1px solid var(--rule);
-}
-
-/* ---- Main content area ------------------------------------------- */
-
-.main {
-  min-width: 0;
-  padding: 56px var(--pad-x) 96px;
-}
-
-.mainInner {
-  max-width: var(--max);
-  margin: 0 auto;
-}
-
-/* ---- Demo banner (kept; restyled to fit) ------------------------- */
-
-.demoBanner {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  margin: 0 auto 28px;
-  max-width: var(--max);
-  border: 1px solid var(--rule-2);
-  background: var(--bg-mute);
-  border-radius: 6px;
-  font-size: 13px;
-  color: var(--ink-2);
-}
-.demoBanner strong { color: var(--ink); }
-
-/* ---- Mobile ------------------------------------------------------- */
-
-@media (max-width: 900px) {
-  .shell { grid-template-columns: 1fr; }
-  .sidebar {
-    position: static;
-    height: auto;
-    flex-direction: row;
-    align-items: center;
-    padding: 18px 22px;
-    border-right: none;
-    border-bottom: 1px solid var(--rule);
-    gap: 18px;
-  }
-  .nav {
-    flex-direction: row;
-    margin: 0;
-  }
-  .navTourButton { width: auto; }
-  .navGroupLabel, .footerNote, .brandSub { display: none; }
-  .orgBox { margin-top: 0; flex-direction: row; align-items: center; }
-  .orgBox label { font-size: 11px; }
-  .main { padding: 32px 22px 64px; }
-  .nav a[aria-current="page"]::before { display: none; }
-}
-
-@media print {
-  .shell { display: block; }
-  .sidebar { display: none; }
-  .main { padding: 0; }
-  .demoBanner { display: none; }
-}
-
-/* ---- Vertical switcher pill --------------------------------------- */
-
-.verticalSwitcher {
-  display: inline-flex;
-  border: 1px solid var(--rule);
-  border-radius: 999px;
-  padding: 3px;
-  background: var(--bg);
-  align-self: flex-start;
-  gap: 0;
-}
-
-.verticalSwitcher a {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 6px 14px;
-  border-radius: 999px;
-  font-size: 11.5px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  text-decoration: none;
-  font-weight: 500;
-  transition: background 120ms, color 120ms;
-}
-
-.verticalSwitcherActive {
-  background: var(--ink);
-  color: var(--bg);
-}
-
-.verticalSwitcherInactive {
-  color: var(--ink-3);
-}
-
-.verticalSwitcherInactive:hover {
-  color: var(--ink);
-}
-
-@media (max-width: 980px) {
-  .verticalSwitcher { align-self: center; }
 }
