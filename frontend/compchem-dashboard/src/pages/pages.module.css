@@ -611,7 +611,7 @@
   border-top: 1px solid var(--rule);
   border-bottom: 1px solid var(--rule);
   background: var(--bg-elev);
-  padding: 24px 0;
+  padding: 24px 24px;
 }
 .deliveryVerificationIcon {
   display: grid;
