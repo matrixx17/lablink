@@ -5,6 +5,7 @@ import { useOrgId, withOrg } from "../components/Layout";
 import {
   ActionBar,
   DataTable,
+  DetailLayout,
   EmptyState,
   ErrorBox,
   fmtDateOnly,
@@ -16,6 +17,7 @@ import {
   SecondaryButton,
   SectionRule,
   StatusBadge,
+  Storyboard,
 } from "../components/ui";
 import { downloadBatchRecord, downloadEvidenceBook } from "../lib/evidenceBook";
 import { getDemoSession } from "../lib/demoSession";
@@ -159,6 +161,21 @@ export default function CampaignDetailPage() {
   ];
 
   return (
+    <DetailLayout
+      storyboard={
+        <Storyboard
+          title={campaign.name}
+          status={<StatusBadge status={extra.status || "active"} />}
+          rows={[
+            { label: "Target", value: extra.target || "—" },
+            { label: "Process", value: extra.process_type || "—" },
+            { label: "Batches", value: campaign.batch_count },
+            { label: "CRO", value: extra.cro_partner || "—" },
+            { label: "Delivered", value: fmtDateOnly(extra.delivery_date) },
+          ]}
+        />
+      }
+    >
     <div className={styles.grid}>
       <HeroHeader
         eyebrow={extra.target ? `Target · ${extra.target}` : "Bioprocess campaign"}
@@ -366,6 +383,7 @@ export default function CampaignDetailPage() {
         </div>
       ) : null}
     </div>
+    </DetailLayout>
   );
 }
 
