@@ -2,6 +2,9 @@
 # LabLink AI - Git Ignore
 # ============================================
 
+# Brainstorming visual-companion scratch (not source)
+.superpowers/
+
 # ----------------------------------------
 # Environment & Secrets
 # ----------------------------------------
