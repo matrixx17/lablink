@@ -317,3 +317,48 @@ export function fmtNumber(value?: number | null, digits = 3) {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
   return Number(value).toLocaleString(undefined, { maximumFractionDigits: digits });
 }
+
+// ============================================================
+// Storyboard rail + detail two-column layout
+// ============================================================
+
+export function DetailLayout({
+  storyboard,
+  children,
+}: {
+  storyboard: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={styles.detailLayout}>
+      {storyboard}
+      <div className={styles.detailMain}>{children}</div>
+    </div>
+  );
+}
+
+export type StoryboardRow = { label: string; value: React.ReactNode };
+
+export function Storyboard({
+  title,
+  status,
+  rows,
+}: {
+  title: React.ReactNode;
+  status?: React.ReactNode;
+  rows: StoryboardRow[];
+}) {
+  return (
+    <aside className={styles.storyboard} aria-label="Storyboard">
+      <div className={styles.storyboardTitle}>{title}</div>
+      {status ? <div className={styles.storyboardRow}>{status}</div> : null}
+      <hr className={styles.storyboardDivider} />
+      {rows.map((r, i) => (
+        <div className={styles.storyboardRow} key={`${r.label}-${i}`}>
+          <span>{r.label}</span>
+          <strong>{r.value}</strong>
+        </div>
+      ))}
+    </aside>
+  );
+}
