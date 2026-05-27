@@ -1,38 +1,39 @@
 /*
-  LabLink — unified design system.
-
-  Inspiration: usul.com, benchling.com, tetrascience.com,
-  vivodyne.com, newlimit.com. Confident editorial typography,
-  generous whitespace, one accent, no chrome.
-
-  Same token names + same values across compchem and bioprocess so
-  shared component CSS theme-matches without per-vertical overrides.
+  LabLink — Epic-style (hybrid Hyperdrive) design system.
+  Deep-blue chrome + Hyperspace density. System fonts, square corners,
+  dense tables. Token NAMES match the prior system so module CSS keeps working.
 */
 
 :root {
-  /* ---- Surface ---------------------------------------------------- */
-  --bg:        #fafaf7;   /* warm off-white page */
-  --bg-elev:   #ffffff;   /* lifted surface (cards, modals) */
-  --bg-elev-2: #f3f2ec;   /* hover / inset */
-  --bg-mute:   #f7f6f1;   /* tonal bands */
+  /* ---- Surface ---- */
+  --bg:        #e9eef3;   /* app background */
+  --bg-elev:   #ffffff;   /* panels, tables, cards */
+  --bg-elev-2: #f6f9fc;   /* zebra stripe / hover / inset */
+  --bg-mute:   #f5f8fb;   /* rails, section bands, status bar */
 
-  /* ---- Ink (text) ------------------------------------------------- */
-  --ink:       #14181f;
-  --ink-2:     #4a5260;
-  --ink-3:     #7a8290;
-  --ink-4:     #b3b9c4;
+  /* ---- Chrome ---- */
+  --band:        #0a4d8c; /* top band */
+  --band-strong: #07396b;
+  --tabstrip:    #13629f; /* activity tab strip */
+  --tab-active:  #ffffff;
 
-  /* ---- Rules ------------------------------------------------------ */
-  --rule:      rgba(20, 24, 31, 0.08);
-  --rule-2:    rgba(20, 24, 31, 0.14);
-  --rule-3:    rgba(20, 24, 31, 0.22);
+  /* ---- Ink ---- */
+  --ink:   #1b2733;
+  --ink-2: #3a4a59;
+  --ink-3: #5a6b7b;
+  --ink-4: #9aa9b8;
 
-  /* ---- Accent: a single confident ink-blue, used sparingly -------- */
-  --accent:        #1d2a4e;
-  --accent-soft:   #eef0f7;
-  --accent-strong: #0f1a36;
+  /* ---- Rules ---- */
+  --rule:   rgba(20, 40, 60, 0.10);
+  --rule-2: #c2cedb;
+  --rule-3: #9fb4c9;
 
-  /* ---- Semantic --------------------------------------------------- */
+  /* ---- Accent (blue) ---- */
+  --accent:        #0a4d8c;
+  --accent-soft:   #e7eff7;
+  --accent-strong: #07396b;
+
+  /* ---- Semantic (clinical status) ---- */
   --good:      #1f7a4d;
   --good-soft: #e8f3ec;
   --warn:      #a36800;
@@ -40,33 +41,31 @@
   --bad:       #a32218;
   --bad-soft:  #f6e7e5;
 
-  /* ---- Typography ------------------------------------------------- */
-  --display: "Instrument Serif", "Source Serif 4", "Times New Roman", serif;
-  --body:    "Inter Tight", "Inter", system-ui, -apple-system, sans-serif;
-  --mono:    "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular,
-             Menlo, monospace;
+  /* ---- Typography: system stack (Epic uses Segoe UI) ---- */
+  --display: "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui, sans-serif;
+  --body:    "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui, sans-serif;
+  --mono:    Consolas, "SFMono-Regular", ui-monospace, Menlo, monospace;
 
-  /* ---- Layout ----------------------------------------------------- */
-  --max:     1240px;
-  --rail:    260px;
-  --pad-x:   56px;
+  /* ---- Shape / Layout ---- */
+  --radius: 2px;
+  --max:    1400px;
+  --rail:   132px;   /* storyboard rail width */
+  --pad-x:  16px;
 
   color: var(--ink);
   background: var(--bg);
   font-family: var(--body);
-  font-feature-settings: "ss01", "cv11";
-  font-size: 14.5px;
-  line-height: 1.55;
+  font-size: 11.5px;
+  line-height: 1.35;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
 * { box-sizing: border-box; }
-
 body { margin: 0; min-height: 100vh; }
 
-a { color: inherit; text-decoration: none; }
-a:hover { color: var(--accent); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
 
 button, input, select, textarea { font: inherit; color: inherit; }
 
@@ -74,62 +73,40 @@ input, select, textarea {
   background: var(--bg-elev);
   border: 1px solid var(--rule-2);
   color: var(--ink);
-  padding: 9px 12px;
-  border-radius: 6px;
-  font-size: 14px;
-  transition: border-color 120ms ease, box-shadow 120ms ease;
+  padding: 3px 7px;
+  border-radius: var(--radius);
+  font-size: 11.5px;
+  transition: border-color 100ms ease, box-shadow 100ms ease;
 }
 input::placeholder, textarea::placeholder { color: var(--ink-4); }
 input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 pre {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: 11px;
   color: var(--ink-2);
   background: var(--bg-mute);
-  padding: 14px 16px;
-  border-radius: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule-2);
+  border-radius: var(--radius);
 }
 
-::selection { background: var(--ink); color: var(--bg); }
+::selection { background: var(--accent); color: #fff; }
 
-/* ---- Headings — editorial scale --------------------------------- */
-h1, h2, h3, h4 { color: var(--ink); margin: 0 0 0.4em; letter-spacing: -0.01em; }
-h1 {
-  font-family: var(--display);
-  font-weight: 400;
-  font-size: clamp(2.6rem, 4.4vw, 3.8rem);
-  line-height: 1.02;
-  letter-spacing: -0.025em;
-}
-h2 {
-  font-family: var(--display);
-  font-weight: 400;
-  font-size: clamp(1.5rem, 2.4vw, 2rem);
-  line-height: 1.12;
-  letter-spacing: -0.015em;
-}
-h3 {
-  font-family: var(--body);
-  font-weight: 600;
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  color: var(--ink-3);
-}
-h4 {
-  font-family: var(--body);
-  font-weight: 600;
-  font-size: 1rem;
-}
+/* ---- Headings — small weighted sans (no serif) ---- */
+h1, h2, h3, h4 { color: var(--ink); margin: 0 0 0.4em; letter-spacing: 0; font-family: var(--body); }
+h1 { font-weight: 600; font-size: 1.45rem; line-height: 1.15; }
+h2 { font-weight: 600; font-size: 1.15rem; line-height: 1.2; }
+h3 { font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); }
+h4 { font-weight: 600; font-size: 0.95rem; }
 
-p { margin: 0 0 0.8em; color: var(--ink-2); }
+p { margin: 0 0 0.6em; color: var(--ink-2); }
 strong { font-weight: 600; color: var(--ink); }
 
 .num, code, kbd {
@@ -139,9 +116,9 @@ strong { font-weight: 600; color: var(--ink); }
 }
 code {
   background: var(--bg-mute);
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 0.85em;
+  padding: 1px 5px;
+  border-radius: var(--radius);
+  font-size: 0.9em;
   color: var(--ink);
 }
 
