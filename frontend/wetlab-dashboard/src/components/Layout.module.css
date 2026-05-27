@@ -139,67 +139,24 @@
   background: rgba(20, 24, 31, 0.32);
 }
 
-.tourModalCard {
-  width: min(520px, 100%);
-  border: 1px solid var(--rule-2);
-  border-radius: 14px;
-  background: var(--bg-elev);
-  padding: 34px 36px;
-  box-shadow: 0 24px 80px rgba(20, 24, 31, 0.16);
-}
+.tourModalCard { width: min(440px, 100%); border: 1px solid var(--rule-2); border-radius: var(--radius); background: var(--bg-elev); padding: 18px 20px; box-shadow: 0 18px 60px rgba(10,40,70,0.22); }
 
-.tourModalCard h2 {
-  font-family: var(--display);
-  font-size: 36px;
-  font-weight: 400;
-  line-height: 1.04;
-  letter-spacing: -0.025em;
-}
+.tourModalCard h2 { font-family: var(--body); font-size: 1.25rem; font-weight: 600; line-height: 1.2; color: var(--accent); }
 
-.tourModalActions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 24px;
-}
+.tourModalActions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 14px; }
 
 .tourModalPrimary,
-.tourModalSecondary {
-  border-radius: 999px;
-  cursor: pointer;
-  font-size: 13.5px;
-  font-weight: 500;
-  padding: 10px 16px;
-  text-decoration: none;
-}
+.tourModalSecondary { border-radius: var(--radius); cursor: pointer; font-size: 11px; font-weight: 600; padding: 4px 12px; text-decoration: none; }
 
-.tourModalPrimary {
-  border: 1px solid var(--ink);
-  background: var(--ink);
-  color: var(--bg);
-}
+.tourModalPrimary { border: 1px solid var(--accent); background: var(--accent); color: #fff; }
 
-.tourModalPrimary:hover {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--bg);
-}
+.tourModalPrimary:hover { background: var(--accent-strong); color: #fff; }
 
-.tourModalSecondary {
-  border: 1px solid var(--rule-2);
-  background: var(--bg-elev);
-  color: var(--ink);
-}
+.tourModalSecondary { border: 1px solid var(--rule-2); background: #f3f7fb; color: var(--ink); }
 
-.tourModalSecondary:hover {
-  border-color: var(--ink);
-}
+.tourModalSecondary:hover { background: var(--accent-soft); color: var(--accent); }
 
-.tourModalFootnote {
-  margin: 20px 0 0;
-  color: var(--ink-3);
-  font-size: 12.5px;
-}
+.tourModalFootnote { margin: 12px 0 0; color: var(--ink-3); font-size: 10.5px; }
 
 .tourModalFootnote a {
   color: var(--ink);
