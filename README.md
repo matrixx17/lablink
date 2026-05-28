@@ -294,7 +294,3 @@ lablink/
 See each branch's `CLAUDE.md` for full architecture notes, design decisions, and changelog.
 
 ---
-
-## License
-
-Proprietary — Acme Therapeutics confidential. (Update once licensing decision is made.)
