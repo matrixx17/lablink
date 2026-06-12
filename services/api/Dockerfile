@@ -22,7 +22,7 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Install Python dependencies
-COPY requirements.txt .
+COPY services/api/requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
@@ -61,8 +61,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Set working directory
 WORKDIR /app
 
-# Copy application code
-COPY --chown=lablink:lablink . .
+# Copy application code and parsers
+COPY --chown=lablink:lablink services/api/ .
+COPY --chown=lablink:lablink parsers/ ./parsers/
 
 # Create directories for runtime
 RUN mkdir -p /app/logs /app/data && \
