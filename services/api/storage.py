@@ -21,14 +21,13 @@ s3 = session.client(
 )
 
 def ensure_bucket():
-    # Create bucket if not exists
-    existing = s3.list_buckets()
-    names = [b["Name"] for b in existing.get("Buckets", [])]
-    if S3_BUCKET not in names:
-        if S3_ENDPOINT.startswith("http://") or S3_ENDPOINT.startswith("https://"):
+    try:
+        existing = s3.list_buckets()
+        names = [b["Name"] for b in existing.get("Buckets", [])]
+        if S3_BUCKET not in names:
             s3.create_bucket(Bucket=S3_BUCKET)
-        else:
-            s3.create_bucket(Bucket=S3_BUCKET)
+    except Exception:
+        pass  # S3/MinIO unavailable — file upload features disabled
 
 def get_presigned_post(filename: str, org_id: str = "default-org"):
     key = f"{org_id}/{uuid.uuid4()}_{os.path.basename(filename)}"
