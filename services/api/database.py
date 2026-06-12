@@ -14,12 +14,15 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
-DB_USER = os.getenv("POSTGRES_USER", "postgres")
-DB_PASS = os.getenv("POSTGRES_PASSWORD", "postgres")
-DB_NAME = os.getenv("POSTGRES_DB", "lablink")
-DB_HOST = os.getenv("POSTGRES_HOST", "postgres")
-DB_PORT = os.getenv("POSTGRES_PORT", "5432")
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+DATABASE_URL = os.getenv("DATABASE_URL") or (
+    "postgresql://{user}:{pw}@{host}:{port}/{db}".format(
+        user=os.getenv("POSTGRES_USER", "postgres"),
+        pw=os.getenv("POSTGRES_PASSWORD", "postgres"),
+        host=os.getenv("POSTGRES_HOST", "postgres"),
+        port=os.getenv("POSTGRES_PORT", "5432"),
+        db=os.getenv("POSTGRES_DB", "lablink"),
+    )
+)
 
 engine = create_engine(DATABASE_URL, echo=False, future=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
