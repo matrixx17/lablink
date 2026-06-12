@@ -11,7 +11,6 @@ from typing import List, Dict, Any, Optional, Tuple
 
 import numpy as np
 import yaml
-from sentence_transformers import SentenceTransformer
 
 # Configuration
 SIMILARITY_THRESHOLD = 0.65
@@ -47,7 +46,11 @@ class OntologyMapper:
             return
         self._initialized = True
 
-        self.model = SentenceTransformer(MODEL_NAME)
+        try:
+            from sentence_transformers import SentenceTransformer
+            self.model = SentenceTransformer(MODEL_NAME)
+        except ImportError:
+            self.model = None
         self.canonical_fields: Dict[str, Dict] = {}
         self.field_embeddings: Dict[str, np.ndarray] = {}
         self.synonym_to_field: Dict[str, str] = {}
@@ -78,6 +81,8 @@ class OntologyMapper:
         if not self.all_synonyms:
             return
 
+        if self.model is None:
+            return
         # Encode all synonyms in one batch for efficiency
         self.synonym_embeddings = self.model.encode(
             self.all_synonyms,
@@ -93,7 +98,7 @@ class OntologyMapper:
             Tuple of (canonical_field_name, confidence_score)
             Returns ("unknown", 0.0) if no match above threshold
         """
-        if self.synonym_embeddings is None or len(self.all_synonyms) == 0:
+        if self.model is None or self.synonym_embeddings is None or len(self.all_synonyms) == 0:
             return ("unknown", 0.0)
 
         # Encode the input header
@@ -127,7 +132,7 @@ class OntologyMapper:
         """
         results = {}
 
-        if self.synonym_embeddings is None or len(self.all_synonyms) == 0:
+        if self.model is None or self.synonym_embeddings is None or len(self.all_synonyms) == 0:
             return {h: ("unknown", 0.0) for h in headers}
 
         # Batch encode all headers for efficiency
