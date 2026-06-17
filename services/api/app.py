@@ -52,6 +52,7 @@ from circuit_breaker import (
     get_all_breaker_status, reset_all_breakers,
     storage_breaker, webhook_breaker, database_breaker
 )
+from auth import resolve_auth, require_org_access
 from demo_sessions import DEMO_RESTRICTED_DETAIL, create_demo_session, get_demo_session
 import qrcode
 
@@ -443,7 +444,9 @@ curl -X POST "${url}" \\
         500: {"description": "Storage service error"},
     },
 )
-def presign(req: PresignRequest, db: Session = Depends(get_db)):
+def presign(req: PresignRequest, db: Session = Depends(get_db), auth: tuple = Depends(resolve_auth)):
+    org_id, _ = auth
+    require_org_access(req.org_id, org_id)
     try:
         url, fields = get_presigned_post(req.filename, org_id=req.org_id)
 
@@ -1075,8 +1078,11 @@ def events(
         False,
         description="Process inline and return errors (recommended for local testing)",
     ),
+    auth: tuple = Depends(resolve_auth),
 ):
     """Process uploaded file manifest with schema mapping and QC."""
+    org_id, _ = auth
+    require_org_access(m.org_id, org_id)
     if m.output_format and m.output_format not in SUPPORTED_FORMATS:
         raise HTTPException(
             status_code=400,
@@ -1101,7 +1107,9 @@ def events(
 
 
 @app.get("/api/v1/files", response_model=List[FileOut])
-def list_files(org_id: str = Query("default-org"), db: Session = Depends(get_db)):
+def list_files(org_id: str = Query("default-org"), db: Session = Depends(get_db), auth: tuple = Depends(resolve_auth)):
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
     rows = db.query(FileRecord).filter(FileRecord.org_id == org_id).order_by(FileRecord.id.desc()).all()
     out = []
     for r in rows:
@@ -1132,7 +1140,10 @@ def get_normalized_file(
     format: str = Query(DEFAULT_OUTPUT_FORMAT, description="Output format: asm (default) or lablink"),
     org_id: str = Query("default-org"),
     db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
 ):
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
     """
     Get the normalized/transformed version of a processed file.
 
@@ -1286,6 +1297,7 @@ def list_audit_logs(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
 ):
     """
     Retrieve audit logs for an organization with optional filtering.
@@ -1293,6 +1305,8 @@ def list_audit_logs(
     Supports date range filtering, action type filtering, and pagination.
     Results are ordered by timestamp descending (newest first).
     """
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
     query = db.query(AuditLog).filter(AuditLog.org_id == org_id)
 
     if start_date:
@@ -1331,7 +1345,9 @@ def list_audit_logs(
 
 
 @app.get("/api/v1/audit/verify", response_model=AuditVerifyResponse)
-def verify_audit(org_id: str = Query("default-org"), db: Session = Depends(get_db)):
+def verify_audit(org_id: str = Query("default-org"), db: Session = Depends(get_db), auth: tuple = Depends(resolve_auth)):
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
     """
     Verify the integrity of the audit chain for an organization.
 
@@ -1441,11 +1457,15 @@ class WebhookOut(BaseModel):
     org_id: str
     url: str
     events: List[str]
-    secret: str
     active: bool
     created_at: datetime
     last_triggered_at: Optional[datetime]
     failure_count: int
+
+
+class WebhookCreatedOut(WebhookOut):
+    """Response on webhook creation — includes the secret (shown once)."""
+    secret: str
 
 
 class WebhookTestResult(BaseModel):
@@ -1456,8 +1476,10 @@ class WebhookTestResult(BaseModel):
     error: Optional[str] = None
 
 
-@app.post("/api/v1/webhooks", response_model=WebhookOut)
-def create_webhook(req: WebhookCreate, db: Session = Depends(get_db)):
+@app.post("/api/v1/webhooks", response_model=WebhookCreatedOut)
+def create_webhook(req: WebhookCreate, db: Session = Depends(get_db), auth: tuple = Depends(resolve_auth)):
+    org_id, _ = auth
+    require_org_access(req.org_id, org_id)
     """
     Register a new webhook subscription.
 
@@ -1510,7 +1532,7 @@ def create_webhook(req: WebhookCreate, db: Session = Depends(get_db)):
         db=db,
     )
 
-    return WebhookOut(
+    return WebhookCreatedOut(
         id=subscription.id,
         org_id=subscription.org_id,
         url=subscription.url,
@@ -1528,8 +1550,11 @@ def list_webhooks(
     org_id: str = Query("default-org"),
     include_inactive: bool = Query(False),
     db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
 ):
     """List all webhook subscriptions for an organization."""
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
     query = db.query(WebhookSubscription).filter(
         WebhookSubscription.org_id == org_id
     )
@@ -1545,7 +1570,6 @@ def list_webhooks(
             org_id=s.org_id,
             url=s.url,
             events=s.events,
-            secret=s.secret,
             active=s.active,
             created_at=s.created_at,
             last_triggered_at=s.last_triggered_at,
@@ -1560,8 +1584,11 @@ def delete_webhook(
     webhook_id: int,
     org_id: str = Query("default-org"),
     db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
 ):
     """Delete a webhook subscription."""
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
     subscription = db.query(WebhookSubscription).filter(
         WebhookSubscription.id == webhook_id,
         WebhookSubscription.org_id == org_id,
@@ -1595,6 +1622,7 @@ async def test_webhook(
     webhook_id: int,
     org_id: str = Query("default-org"),
     db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
 ):
     """
     Send a test event to a webhook endpoint.
@@ -1602,6 +1630,8 @@ async def test_webhook(
     This helps verify that the webhook is correctly configured
     and the receiving endpoint is accessible.
     """
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
     subscription = db.query(WebhookSubscription).filter(
         WebhookSubscription.id == webhook_id,
         WebhookSubscription.org_id == org_id,
@@ -1620,6 +1650,7 @@ def activate_webhook(
     webhook_id: int,
     org_id: str = Query("default-org"),
     db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
 ):
     """
     Reactivate a deactivated webhook.
@@ -1627,6 +1658,8 @@ def activate_webhook(
     Webhooks are automatically deactivated after 10 consecutive failures.
     Use this endpoint to reactivate them after fixing the issue.
     """
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
     subscription = db.query(WebhookSubscription).filter(
         WebhookSubscription.id == webhook_id,
         WebhookSubscription.org_id == org_id,
@@ -1685,7 +1718,10 @@ def get_baselines_endpoint(
     org_id: str = Query("default-org"),
     instrument: Optional[str] = Query(None, description="Filter by instrument type"),
     db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
 ):
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
     """
     Get current baselines for an organization.
 
@@ -1725,7 +1761,10 @@ def reset_baselines_endpoint(
     req: BaselineResetRequest,
     org_id: str = Query("default-org"),
     db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
 ):
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
     """
     Reset baselines for an instrument.
 
@@ -1773,7 +1812,10 @@ def get_baseline_detail(
     field_name: str,
     org_id: str = Query("default-org"),
     db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
 ):
+    a_org, _ = auth
+    require_org_access(org_id, a_org)
     """
     Get detailed baseline for a specific instrument/field combination.
 
@@ -1845,7 +1887,7 @@ Use this after:
 **Note:** Only use this if you're confident the underlying issues are resolved.
 """,
 )
-def reset_circuit_breakers():
+def reset_circuit_breakers(auth: tuple = Depends(resolve_auth)):
     """Reset all circuit breakers to closed state."""
     reset_all_breakers()
     logger.info("All circuit breakers manually reset")

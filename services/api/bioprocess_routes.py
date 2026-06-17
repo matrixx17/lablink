@@ -243,7 +243,13 @@ def get_run_audit(
 
 
 @router.post("/api/v1/auth/keys", response_model=ApiKeyOut)
-def issue_api_key(body: ApiKeyCreate, db: Session = Depends(get_db)):
+def issue_api_key(
+    body: ApiKeyCreate,
+    db: Session = Depends(get_db),
+    auth: tuple = Depends(resolve_auth),
+):
+    org_id, _ = auth
+    require_org_access(body.org_id, org_id)
     record, raw = create_api_key(body.org_id, body.name, db)
     return ApiKeyOut(
         id=record.id, org_id=record.org_id, name=record.name,
@@ -643,8 +649,9 @@ def get_batch(
     if not b:
         raise HTTPException(404, "Batch not found")
     c = db.query(Campaign).filter(Campaign.id == b.campaign_id).first()
-    if c is not None:
-        require_org_access(org_id, c.org_id)
+    if c is None:
+        raise HTTPException(404, "Batch not found")
+    require_org_access(org_id, c.org_id)
     return _batch_to_out(b)
 
 
@@ -659,8 +666,9 @@ def list_batch_timeseries(
     if not b:
         raise HTTPException(404, "Batch not found")
     c = db.query(Campaign).filter(Campaign.id == b.campaign_id).first()
-    if c is not None:
-        require_org_access(org_id, c.org_id)
+    if c is None:
+        raise HTTPException(404, "Batch not found")
+    require_org_access(org_id, c.org_id)
     inoculation_unix = b.inoculation_date.timestamp() if b.inoculation_date else None
     rows = (
         db.query(TimeseriesData)
@@ -707,8 +715,9 @@ def get_batch_qc(
     if not b:
         raise HTTPException(404, "Batch not found")
     c = db.query(Campaign).filter(Campaign.id == b.campaign_id).first()
-    if c is not None:
-        require_org_access(org_id, c.org_id)
+    if c is None:
+        raise HTTPException(404, "Batch not found")
+    require_org_access(org_id, c.org_id)
 
     if refresh and is_demo_auth(auth):
         raise HTTPException(
@@ -739,8 +748,9 @@ def list_batch_samples(
     if not b:
         raise HTTPException(404, "Batch not found")
     c = db.query(Campaign).filter(Campaign.id == b.campaign_id).first()
-    if c is not None:
-        require_org_access(org_id, c.org_id)
+    if c is None:
+        raise HTTPException(404, "Batch not found")
+    require_org_access(org_id, c.org_id)
     rows = (
         db.query(OfflineSample)
         .filter(OfflineSample.batch_id == batch_id)

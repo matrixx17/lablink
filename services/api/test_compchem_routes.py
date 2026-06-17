@@ -98,15 +98,26 @@ import compchem_routes  # noqa: E402
 from compchem_routes import router as compchem_router  # noqa: E402
 from demo_sessions import create_demo_session  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
+from auth import create_api_key  # noqa: E402
 
 app = FastAPI()
 app.include_router(compchem_router)
-client = TestClient(app)
+
+# Seed test API keys for each org used in tests.
+ORG = "acme-pharma"
+DEMO_ORG = "demo-therapeutics"
+_db_for_seed = database.SessionLocal()
+try:
+    _TEST_API_KEY_RECORD, _TEST_API_KEY_RAW = create_api_key(ORG, "test-key", _db_for_seed)
+    _DEMO_API_KEY_RECORD, _DEMO_API_KEY_RAW = create_api_key(DEMO_ORG, "demo-test-key", _db_for_seed)
+finally:
+    _db_for_seed.close()
+
+client = TestClient(app, headers={"X-API-Key": _TEST_API_KEY_RAW})
+demo_client = TestClient(app, headers={"X-API-Key": _DEMO_API_KEY_RAW})
 
 
 # --- Tests ----------------------------------------------------------------
-
-ORG = "acme-pharma"
 
 
 def _q(p):
@@ -172,27 +183,27 @@ def test_get_campaign_404_for_unknown():
 
 
 def test_demo_login_and_reset_seed_demo_org():
-    r = client.post("/api/v1/demo/login")
+    r = demo_client.post("/api/v1/demo/login")
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["org_id"] == "demo-therapeutics"
     assert body["email"] == "demo@lablink.io"
     assert body["demo_mode"] is True
 
-    r = client.get("/api/v1/orgs/demo-therapeutics", params={"org_id": "demo-therapeutics"})
+    r = demo_client.get("/api/v1/orgs/demo-therapeutics", params={"org_id": "demo-therapeutics"})
     assert r.status_code == 200, r.text
     assert r.json()["name"] == "Demo Therapeutics"
     assert r.json()["demo_mode"] is True
 
-    r = client.post("/demo/reset", headers={"X-Demo-Reset-Secret": "wrong"})
+    r = demo_client.post("/demo/reset", headers={"X-Demo-Reset-Secret": "wrong"})
     assert r.status_code == 401
 
-    r = client.post("/demo/reset", headers={"X-Demo-Reset-Secret": "test-demo-reset-secret"})
+    r = demo_client.post("/demo/reset", headers={"X-Demo-Reset-Secret": "test-demo-reset-secret"})
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "ok"
     assert r.json()["reset_at"]
 
-    r = client.get("/api/v1/campaigns", params={"org_id": "demo-therapeutics"})
+    r = demo_client.get("/api/v1/campaigns", params={"org_id": "demo-therapeutics"})
     assert r.status_code == 200, r.text
     campaigns = r.json()
     assert len(campaigns) >= 1
@@ -1019,9 +1030,8 @@ def test_other_org_cannot_see_campaign():
         f"/api/v1/campaigns/{_CAMPAIGN_ID}",
         params={"org_id": "other-org"},
     )
-    # AUTH_REQUIRED is false in tests, so require_org_access passes silently;
-    # the campaign filter on org_id is what enforces isolation
-    assert r.status_code == 404
+    # require_org_access now always enforces tenant isolation → 403
+    assert r.status_code == 403
 
 
 # --- Runner ---------------------------------------------------------------

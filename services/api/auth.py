@@ -16,7 +16,7 @@ from database import ApiKey, SessionLocal
 from demo_sessions import DEMO_ORG_ID, demo_actor, get_demo_session
 
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
-AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "false").lower() == "true"
+AUTH_REQUIRED = os.getenv("AUTH_REQUIRED", "true").lower() == "true"
 BOOTSTRAP_API_KEY = os.getenv("LABLINK_BOOTSTRAP_API_KEY", "")
 
 
@@ -109,5 +109,5 @@ def resolve_auth(
 
 
 def require_org_access(requested_org: str, authenticated_org: str) -> None:
-    if requested_org != authenticated_org and (AUTH_REQUIRED or authenticated_org == DEMO_ORG_ID):
+    if requested_org != authenticated_org:
         raise HTTPException(status_code=403, detail="org_id does not match API key scope")
