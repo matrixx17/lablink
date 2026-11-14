@@ -6,6 +6,12 @@ import styles from "./pages.module.css";
 type DemoDomain = "compchem" | "wetlab";
 type DemoShareDomain = DemoDomain | "both";
 
+const DEMO_PROMISES = [
+  "Read-only workspace with a fresh two-hour session",
+  "Traceable source data, QC context, and audit evidence",
+  "Export-ready records that can be inspected without setup",
+];
+
 const COPY_MESSAGE = "Link copied — anyone with this link can explore the demo.";
 
 async function copyText(value: string) {
@@ -57,6 +63,7 @@ export default function DemoLandingPage() {
 
   const sharedDomain = params.get("ref") === "shared" ? params.get("domain") : null;
   const shareCode = params.get("ref") === "shared" ? params.get("code") : null;
+  const requestedDomain = params.get("ref") !== "shared" ? params.get("domain") : null;
   const shareDomain: DemoShareDomain =
     sharedDomain === "compchem" || sharedDomain === "wetlab" || sharedDomain === "both"
       ? sharedDomain
@@ -82,6 +89,9 @@ export default function DemoLandingPage() {
     if (sharedDomain === "compchem" || sharedDomain === "wetlab") {
       void enterDemo(sharedDomain);
     }
+    if (requestedDomain === "compchem" || requestedDomain === "wetlab") {
+      void enterDemo(requestedDomain);
+    }
     // Shared links for domain=both intentionally leave the selector visible.
   }, []);
 
@@ -104,10 +114,22 @@ export default function DemoLandingPage() {
         <p className={styles.demoLandingTagline}>The provenance engine for drug discovery</p>
         <h1 id="demo-title">Explore a live demo</h1>
         <p className={styles.demoLandingSubtitle}>Explore a live demo - no signup required</p>
-        <button type="button" className={styles.demoShareButton} onClick={copyShareLink}>
-          Share this demo
-        </button>
-        {copyMessage ? <p className={styles.demoShareCopy}>{copyMessage}</p> : null}
+        <div className={styles.demoLandingActions}>
+          <button type="button" className={styles.demoShareButton} onClick={copyShareLink}>
+            Share this demo
+          </button>
+          <a className={styles.demoBriefLink} href="/demo-brief.html">
+            Read the demo brief
+          </a>
+        </div>
+        {copyMessage ? <p className={styles.demoShareCopy} role="status">{copyMessage}</p> : null}
+
+        <aside className={styles.demoPromise} aria-label="What every demo includes">
+          <h2>What every demo includes</h2>
+          <ul>
+            {DEMO_PROMISES.map((promise) => <li key={promise}>{promise}</li>)}
+          </ul>
+        </aside>
 
         <div className={styles.demoChoiceGrid}>
           {DEMOS.map((demo) => (
@@ -115,6 +137,10 @@ export default function DemoLandingPage() {
               <p className={styles.demoChoiceKicker}>{demo.kicker}</p>
               <h2>{demo.title}</h2>
               <p>{demo.description}</p>
+              <dl className={styles.demoChoiceDetails}>
+                <div><dt>View</dt><dd>{demo.domain === "compchem" ? "Molecule lineage and SAR" : "Batch comparison and QC"}</dd></div>
+                <div><dt>Outcome</dt><dd>{demo.domain === "compchem" ? "Lead nomination evidence" : "Lead condition selection"}</dd></div>
+              </dl>
               <button
                 type="button"
                 className={styles.demoChoiceButton}

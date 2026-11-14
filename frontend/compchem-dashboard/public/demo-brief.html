@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="A practical guide to the LabLink computational chemistry and wet lab demos." />
+    <title>LabLink demo brief</title>
+    <link rel="stylesheet" href="/demo-brief.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#brief">Skip to the demo brief</a>
+    <header class="masthead">
+      <a class="wordmark" href="/demo" aria-label="LabLink demo home">LabLink</a>
+      <nav aria-label="Demo brief navigation">
+        <a href="#choose">Choose a demo</a>
+        <a href="#walkthrough">Walkthrough</a>
+        <a href="#questions">Questions</a>
+      </nav>
+      <a class="quiet-link" href="/demo">Open live demo</a>
+    </header>
+
+    <main id="brief">
+      <section class="intro" aria-labelledby="brief-title">
+        <p class="eyebrow">Customer demo companion</p>
+        <h1 id="brief-title">A guided look at scientific work that stays connected to its evidence.</h1>
+        <p class="lede">Use this brief to select the right LabLink story, orient a new viewer, and leave them with the questions the product can answer.</p>
+        <div class="intro-actions">
+          <a class="button button-primary" href="/demo">Choose a live demo</a>
+          <button class="button button-plain" type="button" data-action="print">Print this brief</button>
+        </div>
+      </section>
+
+      <section class="brief-facts" aria-label="Demo basics">
+        <article><span>Two stories</span><strong>Comp chem and wet lab</strong></article>
+        <article><span>One thread</span><strong>Source to decision</strong></article>
+        <article><span>Access</span><strong>Read-only; no signup</strong></article>
+      </section>
+
+      <section class="chooser" id="choose" aria-labelledby="choose-title">
+        <div class="section-heading">
+          <p class="eyebrow">Choose a demo</p>
+          <h2 id="choose-title">Start with the scientific question in front of you.</h2>
+        </div>
+        <div class="filter-row" role="group" aria-label="Filter demo stories">
+          <button class="filter is-active" type="button" data-filter="all" aria-pressed="true">All stories</button>
+          <button class="filter" type="button" data-filter="compchem" aria-pressed="false">Computational chemistry</button>
+          <button class="filter" type="button" data-filter="wetlab" aria-pressed="false">Wet lab</button>
+        </div>
+        <div class="story-grid">
+          <article class="story" data-domain="compchem">
+            <div class="story-number" aria-hidden="true">01</div>
+            <p class="eyebrow">AC-007 · EGFR lead story</p>
+            <h3>Computational chemistry</h3>
+            <p>Follow an inhibitor from screening through simulation and quantum calculations, then inspect how the evidence supports a lead nomination.</p>
+            <dl>
+              <div><dt>Best for</dt><dd>Discovery, computational chemistry, CRO review</dd></div>
+              <div><dt>Follow</dt><dd>Runs, molecule lineage, SAR, delivery verification</dd></div>
+              <div><dt>Finish with</dt><dd>An exportable BioCompute Object and evidence book</dd></div>
+            </dl>
+            <a class="story-link" href="/demo?domain=compchem">Open comp chem story <span aria-hidden="true">→</span></a>
+          </article>
+          <article class="story" data-domain="wetlab">
+            <div class="story-number" aria-hidden="true">02</div>
+            <p class="eyebrow">CHO fed-batch campaign</p>
+            <h3>Wet lab and bioprocess</h3>
+            <p>Compare three process conditions, inspect live and offline measurements, and see why one batch becomes the lead condition.</p>
+            <dl>
+              <div><dt>Best for</dt><dd>Process development, analytics, tech transfer</dd></div>
+              <div><dt>Follow</dt><dd>Batch comparison, time series, QC, campaign approval</dd></div>
+              <div><dt>Finish with</dt><dd>A reviewable batch record and evidence book</dd></div>
+            </dl>
+            <a class="story-link" href="/demo?domain=wetlab">Open wet lab story <span aria-hidden="true">→</span></a>
+          </article>
+        </div>
+      </section>
+
+      <section class="walkthrough" id="walkthrough" aria-labelledby="walkthrough-title">
+        <div class="section-heading">
+          <p class="eyebrow">A useful 10-minute walkthrough</p>
+          <h2 id="walkthrough-title">Keep the conversation on decisions, not navigation.</h2>
+        </div>
+        <ol class="steps">
+          <li><strong>Set the question.</strong><span>Start with the decision the team needs to make: nominate a lead, compare conditions, or review a delivery.</span></li>
+          <li><strong>Trace the record.</strong><span>Move from the campaign into its source runs, samples, or molecules and inspect the captured context.</span></li>
+          <li><strong>Review the checks.</strong><span>Show QC results where they appear in the work—not as a separate spreadsheet or afterthought.</span></li>
+          <li><strong>Close the evidence loop.</strong><span>Open the audit history, verify the delivery, and export the record for a reviewer.</span></li>
+        </ol>
+      </section>
+
+      <section class="questions" id="questions" aria-labelledby="questions-title">
+        <div class="section-heading">
+          <p class="eyebrow">Questions worth asking</p>
+          <h2 id="questions-title">Use the product to answer these in the room.</h2>
+        </div>
+        <div class="question-grid">
+          <details open><summary>Where did this decision come from?</summary><p>Trace the campaign’s material inputs, applied methods, QC findings, and linked record of events.</p></details>
+          <details><summary>What changed between conditions or candidates?</summary><p>Use the comparison views to inspect metrics alongside the underlying experimental or computational context.</p></details>
+          <details><summary>Can a reviewer independently check this later?</summary><p>Audit trails, source references, verification results, and downloadable evidence packages are available from the same workflow.</p></details>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>LabLink connects scientific operations with the evidence behind every decision.</p>
+      <a href="/demo">Return to the live demo</a>
+    </footer>
+    <script src="/demo-brief.js" defer></script>
+  </body>
+</html>
